@@ -37,6 +37,9 @@ export function mapLegacyFormat(format: unknown): IoFormat {
   if (format === 'geopackage') {
     return 'geopackage';
   }
+  if (format === 'raster') {
+    return 'raster';
+  }
   return 'geojson';
 }
 
@@ -51,9 +54,11 @@ export function getUserAttributes(node: EtlPipelineNode): UserAttributeDef[] {
       features?: Array<{ properties?: Record<string, unknown> }>;
     };
     const keys = new Set<string>();
-    inline?.features?.slice(0, 8).forEach((feature) => {
-      Object.keys(feature.properties ?? {}).forEach((key) => keys.add(key));
-    });
+    for (const feature of inline?.features?.slice(0, 8) ?? []) {
+      for (const key of Object.keys(feature.properties ?? {})) {
+        keys.add(key);
+      }
+    }
     return [
       ...Array.from(keys).map((name: string) => ({
         name,

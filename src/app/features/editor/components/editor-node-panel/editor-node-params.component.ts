@@ -1,37 +1,43 @@
-import { ChangeDetectionStrategy, Component, input, output, signal } from '@angular/core';
-import { FormsModule } from '@angular/forms';
-import { LucidePlus, LucideTrash2 } from '@lucide/angular';
-import { HlmButtonImports } from '@app/shared/ui/button';
-import { HlmInputImports } from '@app/shared/ui/input';
-import { HlmLabelImports } from '@app/shared/ui/label';
-import type { EtlPipelineNode } from '../../../copilot/copilot.types';
 import {
-  BUFFER_UNIT_OPTIONS,
-  EPSG_SUGGESTIONS,
-  FEATURE_OPERATION_OPTIONS,
-  FILTER_OPERATOR_OPTIONS,
-  IO_FORMAT_OPTIONS,
-  TABLE_HANDLING_OPTIONS,
-  type FilterCondition,
-} from '../../services/editor-node-config.types';
-import { createDefaultFilterCondition } from '../../services/editor-node-config.utils';
-import { EditorFormatParamsDialogComponent } from './editor-format-params-dialog.component';
-import { EditorVariableInputComponent } from './editor-variable-input.component';
+	ChangeDetectionStrategy,
+	Component,
+	input,
+	output,
+	signal,
+} from "@angular/core";
+import { FormsModule } from "@angular/forms";
+import { HlmButtonImports } from "@app/shared/ui/button";
+import { HlmInputImports } from "@app/shared/ui/input";
+import { HlmLabelImports } from "@app/shared/ui/label";
+import { LucidePlus, LucideTrash2 } from "@lucide/angular";
+import type { EtlPipelineNode } from "../../../copilot/copilot.types";
+import {
+	BUFFER_UNIT_OPTIONS,
+	EPSG_SUGGESTIONS,
+	FEATURE_OPERATION_OPTIONS,
+	FILTER_OPERATOR_OPTIONS,
+	type FilterCondition,
+	IO_FORMAT_OPTIONS,
+	TABLE_HANDLING_OPTIONS,
+} from "../../services/editor-node-config.types";
+import { createDefaultFilterCondition } from "../../services/editor-node-config.utils";
+import { EditorFormatParamsDialogComponent } from "./editor-format-params-dialog.component";
+import { EditorVariableInputComponent } from "./editor-variable-input.component";
 
 @Component({
-  selector: 'app-editor-node-params',
-  changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [
-    FormsModule,
-    LucidePlus,
-    LucideTrash2,
-    HlmButtonImports,
-    HlmInputImports,
-    HlmLabelImports,
-    EditorVariableInputComponent,
-    EditorFormatParamsDialogComponent,
-  ],
-  template: `
+	selector: "app-editor-node-params",
+	changeDetection: ChangeDetectionStrategy.OnPush,
+	imports: [
+		FormsModule,
+		LucidePlus,
+		LucideTrash2,
+		HlmButtonImports,
+		HlmInputImports,
+		HlmLabelImports,
+		EditorVariableInputComponent,
+		EditorFormatParamsDialogComponent,
+	],
+	template: `
     <div class="space-y-4 overflow-y-auto flex-1 min-h-0 pr-1">
       @if (node().type === 'reader' || node().type === 'writer') {
         <section class="space-y-3 rounded-md border bg-muted/20 p-3">
@@ -149,7 +155,23 @@ import { EditorVariableInputComponent } from './editor-variable-input.component'
           @if (node().type === 'reader') {
             <div class="space-y-1">
               <label hlmLabel for="file-import" class="text-xs">Importer un fichier</label>
-              <input id="file-import" type="file" class="text-xs w-full" (change)="fileSelected.emit($event)" />
+              <input
+                id="file-import"
+                type="file"
+                class="text-xs w-full"
+                [attr.accept]="readerFileAccept()"
+                (change)="fileSelected.emit($event)"
+              />
+              @if (readerFormat() === 'shapefile') {
+                <p class="text-[10px] text-muted-foreground">
+                  Shapefile : archive .zip contenant .shp, .dbf et .shx.
+                </p>
+              }
+              @if (configString('sourceFileName')) {
+                <p class="text-[10px] font-medium text-primary truncate">
+                  Fichier : {{ configString('sourceFileName') }}
+                </p>
+              }
             </div>
           }
         </section>
@@ -318,62 +340,89 @@ import { EditorVariableInputComponent } from './editor-variable-input.component'
   `,
 })
 export class EditorNodeParamsComponent {
-  readonly node = input.required<EtlPipelineNode>();
+	readonly node = input.required<EtlPipelineNode>();
 
-  readonly configPatch = output<Record<string, unknown>>();
-  readonly fileSelected = output<Event>();
+	readonly configPatch = output<Record<string, unknown>>();
+	readonly fileSelected = output<Event>();
 
-  readonly formatParamsToken = signal(0);
+	readonly formatParamsToken = signal(0);
 
-  readonly formatOptions = IO_FORMAT_OPTIONS;
-  readonly featureOperationOptions = FEATURE_OPERATION_OPTIONS;
-  readonly tableHandlingOptions = TABLE_HANDLING_OPTIONS;
-  readonly bufferUnitOptions = BUFFER_UNIT_OPTIONS;
-  readonly filterOperatorOptions = FILTER_OPERATOR_OPTIONS;
-  readonly epsgSuggestions = EPSG_SUGGESTIONS;
+	readonly formatOptions = IO_FORMAT_OPTIONS;
+	readonly featureOperationOptions = FEATURE_OPERATION_OPTIONS;
+	readonly tableHandlingOptions = TABLE_HANDLING_OPTIONS;
+	readonly bufferUnitOptions = BUFFER_UNIT_OPTIONS;
+	readonly filterOperatorOptions = FILTER_OPERATOR_OPTIONS;
+	readonly epsgSuggestions = EPSG_SUGGESTIONS;
 
-  conditions(): FilterCondition[] {
-    const stored = this.node().config['conditions'];
-    if (Array.isArray(stored) && stored.length > 0) {
-      return stored as FilterCondition[];
-    }
-    return [createDefaultFilterCondition()];
-  }
+	conditions(): FilterCondition[] {
+		const stored = this.node().config["conditions"];
+		if (Array.isArray(stored) && stored.length > 0) {
+			return stored as FilterCondition[];
+		}
+		return [createDefaultFilterCondition()];
+	}
 
-  configString(key: string, fallback = ''): string {
-    const value = this.node().config[key];
-    return value === undefined || value === null ? fallback : String(value);
-  }
+	configString(key: string, fallback = ""): string {
+		const value = this.node().config[key];
+		return value === undefined || value === null ? fallback : String(value);
+	}
 
-  isPostgisFormat(): boolean {
-    return (this.node().config['format'] ?? 'geojson') === 'postgis';
-  }
+	isPostgisFormat(): boolean {
+		return (this.node().config["format"] ?? "geojson") === "postgis";
+	}
 
-  openFormatParams(): void {
-    this.formatParamsToken.update((token) => token + 1);
-  }
+	readerFormat(): string {
+		return String(this.node().config["format"] ?? "geojson");
+	}
 
-  onFormatParamsSaved(patch: Record<string, unknown>): void {
-    this.configPatch.emit(patch);
-  }
+	readerFileAccept(): string {
+		switch (this.readerFormat()) {
+			case "shapefile":
+				return ".zip";
+			case "geopackage":
+				return ".gpkg";
+			case "csv":
+				return ".csv";
+			case "ifc":
+				return ".ifc";
+			case "raster":
+				return ".jpg,.jpeg,.png,.tif,.tiff,.zip";
+			default:
+				return ".geojson,.json";
+		}
+	}
 
-  patch(partial: Record<string, unknown>): void {
-    this.configPatch.emit(partial);
-  }
+	openFormatParams(): void {
+		this.formatParamsToken.update((token) => token + 1);
+	}
 
-  addCondition(): void {
-    this.patch({ conditions: [...this.conditions(), createDefaultFilterCondition()] });
-  }
+	onFormatParamsSaved(patch: Record<string, unknown>): void {
+		this.configPatch.emit(patch);
+	}
 
-  removeCondition(index: number): void {
-    const next = this.conditions().filter((_, itemIndex) => itemIndex !== index);
-    this.patch({ conditions: next.length > 0 ? next : [createDefaultFilterCondition()] });
-  }
+	patch(partial: Record<string, unknown>): void {
+		this.configPatch.emit(partial);
+	}
 
-  updateCondition(index: number, partial: Partial<FilterCondition>): void {
-    const next = this.conditions().map((condition, itemIndex) =>
-      itemIndex === index ? { ...condition, ...partial } : condition,
-    );
-    this.patch({ conditions: next });
-  }
+	addCondition(): void {
+		this.patch({
+			conditions: [...this.conditions(), createDefaultFilterCondition()],
+		});
+	}
+
+	removeCondition(index: number): void {
+		const next = this.conditions().filter(
+			(_, itemIndex) => itemIndex !== index,
+		);
+		this.patch({
+			conditions: next.length > 0 ? next : [createDefaultFilterCondition()],
+		});
+	}
+
+	updateCondition(index: number, partial: Partial<FilterCondition>): void {
+		const next = this.conditions().map((condition, itemIndex) =>
+			itemIndex === index ? { ...condition, ...partial } : condition,
+		);
+		this.patch({ conditions: next });
+	}
 }

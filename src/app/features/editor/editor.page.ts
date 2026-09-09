@@ -1,51 +1,67 @@
 import {
-  ChangeDetectionStrategy,
-  Component,
-  ElementRef,
-  inject,
-  OnInit,
-  signal,
-  viewChild,
-} from '@angular/core';
-import { toast } from 'ngx-sonner';
-import { UxModeService } from '@app/core/ux-mode/ux-mode.service';
-import { HlmSkeletonImports } from '@app/shared/ui/skeleton';
-import { CopilotChatComponent } from '../copilot/components/copilot-chat/copilot-chat.component';
-import type { CopilotMessage, EtlPipelineJson } from '../copilot/copilot.types';
-import { EditorCanvasComponent } from './components/editor-canvas/editor-canvas.component';
-import { EditorNodePanelComponent } from './components/editor-node-panel/editor-node-panel.component';
-import { EditorBottomDockComponent } from './components/editor-workspace/editor-bottom-dock.component';
-import { EditorNavigatorPanelComponent } from './components/editor-workspace/editor-navigator-panel.component';
-import { EditorRibbonBarComponent } from './components/editor-workspace/editor-ribbon-bar.component';
-import { EditorTransformerGalleryComponent } from './components/editor-workspace/editor-transformer-gallery.component';
-import { EditorThemeService } from './services/editor-theme.service';
-import { EditorService } from './editor.service';
+	ChangeDetectionStrategy,
+	Component,
+	type ElementRef,
+	inject,
+	type OnDestroy,
+	type OnInit,
+	signal,
+	viewChild,
+} from "@angular/core";
+import { FileInspectionService } from "@app/core/services/copilot/file-inspection.service";
+import {
+	isProjectDropFile,
+	isSupportedDropFile,
+} from "@app/core/services/copilot/smart-file-drop.utils";
+import { formatErrorMessage } from "@app/core/utils/error.utils";
+import { UxModeService } from "@app/core/ux-mode/ux-mode.service";
+import { HlmSkeletonImports } from "@app/shared/ui/skeleton";
+import { toast } from "ngx-sonner";
+import { CopilotChatComponent } from "../copilot/components/copilot-chat/copilot-chat.component";
+import { CopilotService } from "../copilot/copilot.service";
+import type { CopilotMessage, EtlPipelineJson } from "../copilot/copilot.types";
+import { EditorCanvasComponent } from "./components/editor-canvas/editor-canvas.component";
+import { EditorNodePanelComponent } from "./components/editor-node-panel/editor-node-panel.component";
+import { EditorBottomDockComponent } from "./components/editor-workspace/editor-bottom-dock.component";
+import { EditorNavigatorPanelComponent } from "./components/editor-workspace/editor-navigator-panel.component";
+import { EditorRibbonBarComponent } from "./components/editor-workspace/editor-ribbon-bar.component";
+import { EditorSmartDropOverlayComponent } from "./components/editor-workspace/editor-smart-drop-overlay.component";
+import { EditorTransformerGalleryComponent } from "./components/editor-workspace/editor-transformer-gallery.component";
+import { EditorService } from "./editor.service";
+import {
+	dragEventHasFiles,
+	firstDroppedFile,
+	needsInMemoryGeoRead,
+	readFileAsArrayBuffer,
+} from "./services/editor-file-drop.utils";
+import { EditorThemeService } from "./services/editor-theme.service";
 
-type ResizeAxis = 'left' | 'right' | 'bottom' | 'leftSplit';
+type ResizeAxis = "left" | "right" | "bottom" | "leftSplit";
 
 interface ResizeSession {
-  axis: ResizeAxis;
-  start: number;
-  initial: number;
+	axis: ResizeAxis;
+	start: number;
+	initial: number;
 }
 
 @Component({
-  selector: 'app-editor-page',
-  changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [
-    HlmSkeletonImports,
-    EditorRibbonBarComponent,
-    EditorNavigatorPanelComponent,
-    EditorTransformerGalleryComponent,
-    EditorCanvasComponent,
-    EditorNodePanelComponent,
-    EditorBottomDockComponent,
-    CopilotChatComponent,
-  ],
-  host: {
-    class: 'block h-full min-h-0',
-  },
-  template: `
+	selector: "app-editor-page",
+	changeDetection: ChangeDetectionStrategy.OnPush,
+	imports: [
+		HlmSkeletonImports,
+		EditorRibbonBarComponent,
+		EditorNavigatorPanelComponent,
+		EditorTransformerGalleryComponent,
+		EditorCanvasComponent,
+		EditorNodePanelComponent,
+		EditorBottomDockComponent,
+		CopilotChatComponent,
+		EditorSmartDropOverlayComponent,
+	],
+	host: {
+		class: "block h-full min-h-0",
+	},
+	template: `
     <div class="-m-6 flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col overflow-hidden bg-background">
       <app-editor-ribbon-bar
         [dark]="editorTheme.dark()"
@@ -122,6 +138,13 @@ interface ResizeSession {
             </div>
 
             <div class="relative min-h-0 flex-1">
+              <app-editor-smart-drop-overlay
+                class="pointer-events-none absolute inset-0 z-20"
+                [class.left-[42%]]="uxMode.mode() === 'novice'"
+                [class.w-[58%]]="uxMode.mode() === 'novice'"
+                [visible]="globalFileDragActive()"
+                [fileLabel]="globalFileDragName()"
+              />
               @if (uxMode.mode() === 'novice') {
                 <app-copilot-chat
                   class="absolute inset-y-0 left-0 z-10 w-full border-r bg-card lg:w-[42%]"
@@ -130,6 +153,8 @@ interface ResizeSession {
                   (injectPipeline)="onInjectPipeline($event)"
                   (runPipeline)="onRunFromChat($event)"
                   (applyDiagnosis)="onApplyDiagnosis($event)"
+                  [handleFileDropLocally]="false"
+                  (actionChipSelected)="onCopilotActionSelected($event)"
                 />
               }
               <app-editor-canvas
@@ -145,7 +170,6 @@ interface ResizeSession {
                 [dark]="editorTheme.dark()"
                 (explainNode)="onExplainNode($event)"
                 (openInspector)="onOpenInspector($event)"
-                (workspaceFileDropped)="onWorkspaceFileDropped($event)"
               />
             </div>
 
@@ -161,7 +185,9 @@ interface ResizeSession {
                 <app-editor-bottom-dock
                   class="block h-full"
                   [preview]="editorService.workspacePreview()"
+                  [rasterOverlay]="editorService.workspaceRasterOverlay()"
                   [attributes]="editorService.selectedNodeAttributes()"
+                  [attributeRows]="editorService.selectedNodeAttributeRows()"
                   [srid]="editorService.activeProject()?.default_srid ?? 4326"
                   [executionStatus]="editorService.executionStatus()"
                   [executionProgress]="editorService.executionProgress()"
@@ -188,6 +214,7 @@ interface ResizeSession {
                 <app-editor-node-panel
                   [node]="editorService.selectedNode()"
                   [preview]="editorService.selectedNodePreview()"
+                  [rasterOverlay]="editorService.selectedNodeRasterOverlay()"
                   [attributes]="editorService.selectedNodeAttributes()"
                   [assistantReply]="editorService.assistantReply()"
                   [focusParamsToken]="inspectorFocusToken()"
@@ -212,236 +239,410 @@ interface ResizeSession {
     </div>
   `,
 })
-export class EditorPage implements OnInit {
-  readonly editorService = inject(EditorService);
-  readonly uxMode = inject(UxModeService);
-  readonly editorTheme = inject(EditorThemeService);
-  readonly canvas = viewChild<EditorCanvasComponent>('canvasRef');
-  readonly pipelineFileInput = viewChild<ElementRef<HTMLInputElement>>('pipelineFileInput');
+export class EditorPage implements OnInit, OnDestroy {
+	readonly editorService = inject(EditorService);
+	readonly uxMode = inject(UxModeService);
+	readonly editorTheme = inject(EditorThemeService);
+	readonly copilotService = inject(CopilotService);
+	readonly fileInspection = inject(FileInspectionService);
+	readonly canvas = viewChild<EditorCanvasComponent>("canvasRef");
+	readonly pipelineFileInput =
+		viewChild<ElementRef<HTMLInputElement>>("pipelineFileInput");
 
-  readonly inspectorFocusToken = signal(0);
-  readonly leftPanelOpen = signal(true);
-  readonly rightPanelOpen = signal(true);
-  readonly bottomPanelOpen = signal(true);
-  readonly bottomCollapsed = signal(false);
+	readonly inspectorFocusToken = signal(0);
+	readonly leftPanelOpen = signal(true);
+	readonly rightPanelOpen = signal(true);
+	readonly bottomPanelOpen = signal(true);
+	readonly bottomCollapsed = signal(false);
 
-  readonly leftWidth = signal(248);
-  readonly rightWidth = signal(320);
-  readonly bottomHeight = signal(220);
-  readonly leftSplitRatio = signal(0.52);
+	readonly leftWidth = signal(248);
+	readonly rightWidth = signal(320);
+	readonly bottomHeight = signal(220);
+	readonly leftSplitRatio = signal(0.52);
 
-  readonly activeWorkspaceTab = signal('main');
-  readonly workspaceTabs = [{ id: 'main', label: 'Main Workspace' }];
+	readonly activeWorkspaceTab = signal("main");
+	readonly workspaceTabs = [{ id: "main", label: "Main Workspace" }];
 
-  private resizeSession: ResizeSession | null = null;
+	readonly globalFileDragActive = signal(false);
+	readonly globalFileDragName = signal<string | null>(null);
 
-  ngOnInit(): void {
-    void this.refresh();
-  }
+	private resizeSession: ResizeSession | null = null;
+	private windowDragDepth = 0;
 
-  async refresh(): Promise<void> {
-    try {
-      await this.editorService.load();
-      this.editorService.ensureDemoPipelineOnLoad();
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Erreur lors du chargement.';
-      toast.error(message);
-    }
-  }
+	private readonly onWindowDragOver = (event: DragEvent): void => {
+		if (!dragEventHasFiles(event)) {
+			return;
+		}
+		event.preventDefault();
+		event.stopPropagation();
+		if (event.dataTransfer) {
+			event.dataTransfer.dropEffect = "copy";
+		}
+		const file = firstDroppedFile(event);
+		if (file && isSupportedDropFile(file)) {
+			this.globalFileDragActive.set(true);
+			this.globalFileDragName.set(file.name);
+		}
+	};
 
-  startResize(event: PointerEvent, axis: ResizeAxis): void {
-    event.preventDefault();
-    const start = axis === 'left' || axis === 'right' ? event.clientX : event.clientY;
-    const initial =
-      axis === 'left'
-        ? this.leftWidth()
-        : axis === 'right'
-          ? this.rightWidth()
-          : axis === 'bottom'
-            ? this.bottomHeight()
-            : this.leftSplitRatio();
+	private readonly onWindowDragEnter = (event: DragEvent): void => {
+		if (!dragEventHasFiles(event)) {
+			return;
+		}
+		event.preventDefault();
+		event.stopPropagation();
+		this.windowDragDepth += 1;
+		const file = firstDroppedFile(event);
+		if (file && isSupportedDropFile(file)) {
+			this.globalFileDragActive.set(true);
+			this.globalFileDragName.set(file.name);
+		}
+	};
 
-    this.resizeSession = { axis, start, initial };
+	private readonly onWindowDragLeave = (event: DragEvent): void => {
+		if (!dragEventHasFiles(event)) {
+			return;
+		}
+		this.windowDragDepth = Math.max(0, this.windowDragDepth - 1);
+		if (this.windowDragDepth === 0) {
+			this.clearGlobalFileDrag();
+		}
+	};
 
-    const onMove = (moveEvent: PointerEvent) => {
-      const session = this.resizeSession;
-      if (!session) {
-        return;
-      }
+	private readonly onWindowDrop = (event: DragEvent): void => {
+		if (!dragEventHasFiles(event)) {
+			return;
+		}
+		event.preventDefault();
+		event.stopPropagation();
+		this.clearGlobalFileDrag();
 
-      if (session.axis === 'left') {
-        const delta = moveEvent.clientX - session.start;
-        this.leftWidth.set(Math.min(420, Math.max(180, session.initial + delta)));
-        return;
-      }
+		const file = firstDroppedFile(event);
+		if (!file || !isSupportedDropFile(file)) {
+			return;
+		}
 
-      if (session.axis === 'right') {
-        const delta = session.start - moveEvent.clientX;
-        this.rightWidth.set(Math.min(520, Math.max(240, session.initial + delta)));
-        return;
-      }
+		void this.routeDroppedFile(file);
+	};
 
-      if (session.axis === 'bottom') {
-        const delta = session.start - moveEvent.clientY;
-        this.bottomHeight.set(Math.min(480, Math.max(120, session.initial + delta)));
-        this.bottomCollapsed.set(false);
-        return;
-      }
+	ngOnInit(): void {
+		window.addEventListener("dragenter", this.onWindowDragEnter, false);
+		window.addEventListener("dragover", this.onWindowDragOver, false);
+		window.addEventListener("dragleave", this.onWindowDragLeave, false);
+		window.addEventListener("drop", this.onWindowDrop, false);
+		void this.refresh();
+	}
 
-      const container = (event.target as HTMLElement).closest('aside');
-      const total = container?.clientHeight ?? 600;
-      const delta = moveEvent.clientY - session.start;
-      const next = session.initial + delta / total;
-      this.leftSplitRatio.set(Math.min(0.78, Math.max(0.22, next)));
-    };
+	ngOnDestroy(): void {
+		window.removeEventListener("dragenter", this.onWindowDragEnter, false);
+		window.removeEventListener("dragover", this.onWindowDragOver, false);
+		window.removeEventListener("dragleave", this.onWindowDragLeave, false);
+		window.removeEventListener("drop", this.onWindowDrop, false);
+	}
 
-    const onUp = () => {
-      this.resizeSession = null;
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-    };
+	async refresh(): Promise<void> {
+		try {
+			await this.editorService.load();
+			this.editorService.ensureDemoPipelineOnLoad();
+		} catch (error: unknown) {
+			const message =
+				error instanceof Error ? error.message : "Erreur lors du chargement.";
+			toast.error(message);
+		}
+	}
 
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-  }
+	startResize(event: PointerEvent, axis: ResizeAxis): void {
+		event.preventDefault();
+		const start =
+			axis === "left" || axis === "right" ? event.clientX : event.clientY;
+		const initial =
+			axis === "left"
+				? this.leftWidth()
+				: axis === "right"
+					? this.rightWidth()
+					: axis === "bottom"
+						? this.bottomHeight()
+						: this.leftSplitRatio();
 
-  addGroupFromRibbon(): void {
-    const pan = this.canvas()?.pan() ?? { x: 0, y: 0 };
-    this.editorService.addGroup('Bookmark', { panX: pan.x, panY: pan.y });
-  }
+		this.resizeSession = { axis, start, initial };
 
-  onSelectGroup(_groupId: string): void {
-    // Group selection is handled on canvas; navigator acts as quick access.
-  }
+		const onMove = (moveEvent: PointerEvent) => {
+			const session = this.resizeSession;
+			if (!session) {
+				return;
+			}
 
-  openPipelineFile(): void {
-    this.pipelineFileInput()?.nativeElement.click();
-  }
+			if (session.axis === "left") {
+				const delta = moveEvent.clientX - session.start;
+				this.leftWidth.set(
+					Math.min(420, Math.max(180, session.initial + delta)),
+				);
+				return;
+			}
 
-  async onPipelineFileSelected(event: Event): Promise<void> {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) {
-      return;
-    }
+			if (session.axis === "right") {
+				const delta = session.start - moveEvent.clientX;
+				this.rightWidth.set(
+					Math.min(520, Math.max(240, session.initial + delta)),
+				);
+				return;
+			}
 
-    try {
-      await this.onWorkspaceFileDropped(file);
-    } finally {
-      input.value = '';
-    }
-  }
+			if (session.axis === "bottom") {
+				const delta = session.start - moveEvent.clientY;
+				this.bottomHeight.set(
+					Math.min(480, Math.max(120, session.initial + delta)),
+				);
+				this.bottomCollapsed.set(false);
+				return;
+			}
 
-  async onWorkspaceFileDropped(file: File): Promise<void> {
-    try {
-      const warnings = await this.editorService.importProjectFile(file);
-      this.bottomCollapsed.set(false);
-      this.canvas()?.fitView();
-      toast.success(`Projet « ${file.name} » importé.`);
-      if (warnings.length > 0) {
-        toast.message(`Import terminé avec ${warnings.length} avertissement(s). Consultez la console.`);
-      }
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Erreur lors de l\'import.';
-      toast.error(message);
-    }
-  }
+			const container = (event.target as HTMLElement).closest("aside");
+			const total = container?.clientHeight ?? 600;
+			const delta = moveEvent.clientY - session.start;
+			const next = session.initial + delta / total;
+			this.leftSplitRatio.set(Math.min(0.78, Math.max(0.22, next)));
+		};
 
-  onInjectPipeline(pipeline: EtlPipelineJson): void {
-    this.editorService.injectPipeline(pipeline);
-    toast.success('Pipeline appliqué.');
-  }
+		const onUp = () => {
+			this.resizeSession = null;
+			window.removeEventListener("pointermove", onMove);
+			window.removeEventListener("pointerup", onUp);
+		};
 
-  async onRunFromChat(pipeline: EtlPipelineJson): Promise<void> {
-    try {
-      const result = await this.editorService.runPipelineFromChat(pipeline);
-      toast.success(`Pipeline exécuté — ${result.metrics.rowsWritten} entité(s).`);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Erreur lors de l\'exécution.';
-      toast.error(message);
-    }
-  }
+		window.addEventListener("pointermove", onMove);
+		window.addEventListener("pointerup", onUp);
+	}
 
-  onApplyDiagnosis(message: CopilotMessage): void {
-    const actionType = message.diagnosis?.actionType;
-    if (actionType) {
-      this.editorService.applyDiagnosisFix(actionType);
-      toast.success('Correction suggérée appliquée au pipeline.');
-    }
-  }
+	addGroupFromRibbon(): void {
+		const pan = this.canvas()?.pan() ?? { x: 0, y: 0 };
+		this.editorService.addGroup("Bookmark", { panX: pan.x, panY: pan.y });
+	}
 
-  async createProject(): Promise<void> {
-    const name = `Projet ${new Date().toLocaleDateString('fr-FR')}`;
-    try {
-      await this.editorService.create({ name });
-      toast.success('Projet créé avec pipeline démo.');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Erreur lors de la création.';
-      toast.error(message);
-    }
-  }
+	onSelectGroup(_groupId: string): void {
+		// Group selection is handled on canvas; navigator acts as quick access.
+	}
 
-  async savePipeline(): Promise<void> {
-    try {
-      await this.editorService.saveCanvasPipeline();
-      toast.success('Pipeline enregistré.');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Erreur lors de l\'enregistrement.';
-      toast.error(message);
-    }
-  }
+	openPipelineFile(): void {
+		this.pipelineFileInput()?.nativeElement.click();
+	}
 
-  async runActiveProject(): Promise<void> {
-    const project = this.editorService.activeProject();
-    if (!project) {
-      toast.error('Aucun projet actif.');
-      return;
-    }
-    await this.executeProject(project.id);
-  }
+	async onPipelineFileSelected(event: Event): Promise<void> {
+		const input = event.target as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) {
+			return;
+		}
 
-  async executeProject(projectId: string): Promise<void> {
-    try {
-      const { executionId, result } = await this.editorService.execute(projectId);
-      toast.success(
-        `Pipeline exécuté — ${result.metrics.rowsWritten} entité(s) en ${result.metrics.durationMs} ms (${executionId.slice(0, 8)}…).`,
-      );
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Erreur lors de l\'exécution.';
-      toast.error(message);
-    }
-  }
+		try {
+			await this.onWorkspaceFileDropped(file);
+		} finally {
+			input.value = "";
+		}
+	}
 
-  async onAskAssistant(): Promise<void> {
-    await this.explainSelectedNode();
-  }
+	async onWorkspaceFileDropped(file: File): Promise<void> {
+		try {
+			const warnings = await this.editorService.importProjectFile(file);
+			this.bottomCollapsed.set(false);
+			this.canvas()?.fitView();
+			toast.success(`Projet « ${file.name} » importé.`);
+			if (warnings.length > 0) {
+				toast.message(
+					`Import terminé avec ${warnings.length} avertissement(s). Consultez la console.`,
+				);
+			}
+		} catch (error: unknown) {
+			const message =
+				error instanceof Error ? error.message : "Erreur lors de l'import.";
+			toast.error(message);
+		}
+	}
 
-  async onExplainNode(nodeId: string): Promise<void> {
-    this.editorService.selectNode(nodeId);
-    await this.explainSelectedNode();
-  }
+	async onSmartDataFileDropped(file: File): Promise<void> {
+		await this.routeDroppedFile(file);
+	}
 
-  onOpenInspector(_nodeId: string): void {
-    this.inspectorFocusToken.update((value) => value + 1);
-  }
+	private async routeDroppedFile(file: File): Promise<void> {
+		try {
+			if (isProjectDropFile(file)) {
+				await this.onWorkspaceFileDropped(file);
+				return;
+			}
 
-  private async explainSelectedNode(): Promise<void> {
-    try {
-      await this.editorService.askAssistant();
-      toast.success('Explication du nœud disponible dans l\'inspecteur.');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Erreur assistant.';
-      toast.error(message);
-    }
-  }
+			await this.analyzeDataFile(file);
+		} catch (error: unknown) {
+			toast.error(
+				formatErrorMessage(
+					error,
+					"Erreur lors du traitement du fichier déposé.",
+				),
+			);
+		}
+	}
 
-  async onFileImport(nodeId: string, file: File): Promise<void> {
-    try {
-      await this.editorService.importFileToNode(nodeId, file);
-      toast.success(`Fichier « ${file.name} » importé.`);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Erreur lors de l\'import.';
-      toast.error(message);
-    }
-  }
+	private async analyzeDataFile(file: File): Promise<void> {
+		this.uxMode.setMode("novice");
+
+		const inspection = needsInMemoryGeoRead(file)
+			? await this.fileInspection.inspectFromArrayBuffer(
+					file,
+					await readFileAsArrayBuffer(file),
+				)
+			: await this.fileInspection.inspect(file);
+
+		this.copilotService.presentFileInspection(inspection, file);
+		this.bottomCollapsed.set(false);
+	}
+
+	private clearGlobalFileDrag(): void {
+		this.windowDragDepth = 0;
+		this.globalFileDragActive.set(false);
+		this.globalFileDragName.set(null);
+	}
+
+	async onCopilotActionSelected(event: {
+		actionId: string;
+		label: string;
+		pipeline: EtlPipelineJson;
+	}): Promise<void> {
+		try {
+			const file = this.copilotService.pendingFile();
+			await this.editorService.injectPipelineWithFile(event.pipeline, file);
+			const readerId = this.editorService
+				.canvasPipeline()
+				.nodes.find((node) => node.type === "reader")?.id;
+			if (readerId) {
+				this.editorService.selectNode(readerId);
+			}
+
+			this.canvas()?.fitView();
+			this.bottomCollapsed.set(false);
+			this.copilotService.confirmWorkflowGenerated(file?.name ?? "fichier");
+			toast.success("Pipeline généré sur le canvas.");
+		} catch (error: unknown) {
+			toast.error(
+				formatErrorMessage(error, "Erreur lors de la génération du workflow."),
+			);
+		}
+	}
+
+	async onInjectPipeline(pipeline: EtlPipelineJson): Promise<void> {
+		try {
+			await this.editorService.injectPipelineWithFile(
+				pipeline,
+				this.copilotService.pendingFile(),
+			);
+			this.canvas()?.fitView();
+			toast.success("Pipeline appliqué.");
+		} catch (error: unknown) {
+			toast.error(
+				formatErrorMessage(error, "Erreur lors de l'application du pipeline."),
+			);
+		}
+	}
+
+	async onRunFromChat(pipeline: EtlPipelineJson): Promise<void> {
+		try {
+			const result = await this.editorService.runPipelineFromChat(
+				pipeline,
+				this.copilotService.pendingFile(),
+			);
+			toast.success(
+				`Pipeline exécuté — ${result.metrics.rowsWritten} entité(s).`,
+			);
+		} catch (error: unknown) {
+			toast.error(formatErrorMessage(error, "Erreur lors de l'exécution."));
+		}
+	}
+
+	onApplyDiagnosis(message: CopilotMessage): void {
+		const actionType = message.diagnosis?.actionType;
+		if (actionType) {
+			this.editorService.applyDiagnosisFix(actionType);
+			toast.success("Correction suggérée appliquée au pipeline.");
+		}
+	}
+
+	async createProject(): Promise<void> {
+		try {
+			await this.editorService.create({
+				name: this.editorService.buildDefaultProjectName(),
+			});
+			toast.success("Projet créé avec pipeline démo.");
+		} catch (error: unknown) {
+			toast.error(formatErrorMessage(error, "Erreur lors de la création."));
+		}
+	}
+
+	async savePipeline(): Promise<void> {
+		try {
+			await this.editorService.saveCanvasPipeline();
+			toast.success("Pipeline enregistré.");
+		} catch (error: unknown) {
+			const message =
+				error instanceof Error
+					? error.message
+					: "Erreur lors de l'enregistrement.";
+			toast.error(message);
+		}
+	}
+
+	async runActiveProject(): Promise<void> {
+		const project = this.editorService.activeProject();
+		if (!project) {
+			toast.error("Aucun projet actif.");
+			return;
+		}
+		await this.executeProject(project.id);
+	}
+
+	async executeProject(projectId: string): Promise<void> {
+		try {
+			const { executionId, result } =
+				await this.editorService.execute(projectId);
+			toast.success(
+				`Pipeline exécuté — ${result.metrics.rowsWritten} entité(s) en ${result.metrics.durationMs} ms (${executionId.slice(0, 8)}…).`,
+			);
+		} catch (error: unknown) {
+			const message =
+				error instanceof Error ? error.message : "Erreur lors de l'exécution.";
+			toast.error(message);
+		}
+	}
+
+	async onAskAssistant(): Promise<void> {
+		await this.explainSelectedNode();
+	}
+
+	async onExplainNode(nodeId: string): Promise<void> {
+		this.editorService.selectNode(nodeId);
+		await this.explainSelectedNode();
+	}
+
+	onOpenInspector(_nodeId: string): void {
+		this.inspectorFocusToken.update((value) => value + 1);
+	}
+
+	private async explainSelectedNode(): Promise<void> {
+		try {
+			await this.editorService.askAssistant();
+			toast.success("Explication du nœud disponible dans l'inspecteur.");
+		} catch (error: unknown) {
+			const message =
+				error instanceof Error ? error.message : "Erreur assistant.";
+			toast.error(message);
+		}
+	}
+
+	async onFileImport(nodeId: string, file: File): Promise<void> {
+		try {
+			await this.editorService.importFileToNode(nodeId, file);
+			toast.success(`Fichier « ${file.name} » importé.`);
+		} catch (error: unknown) {
+			const message =
+				error instanceof Error ? error.message : "Erreur lors de l'import.";
+			toast.error(message);
+		}
+	}
 }

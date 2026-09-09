@@ -1,33 +1,47 @@
-import { ChangeDetectionStrategy, Component, effect, input, output, signal } from '@angular/core';
-import { LucideBot, LucideListTree, LucideMap, LucideSettings, LucideTable } from '@lucide/angular';
-import { HlmButtonImports } from '@app/shared/ui/button';
-import type { FeatureCollection } from 'geojson';
-import type { EtlPipelineNode } from '../../../copilot/copilot.types';
-import type { NodeAttribute } from '../../services/editor-canvas.utils';
-import { mergeNodeConfig } from '../../services/editor-node-config.utils';
-import { EditorMapPreviewComponent } from '../editor-map-preview/editor-map-preview.component';
-import { EditorFormatAttributesTableComponent } from './editor-format-attributes-table.component';
-import { EditorNodeAttributesTableComponent } from './editor-node-attributes-table.component';
-import { EditorNodeParamsComponent } from './editor-node-params.component';
+import {
+	ChangeDetectionStrategy,
+	Component,
+	effect,
+	input,
+	output,
+	signal,
+} from "@angular/core";
+import type { MapRasterOverlay } from "@app/core/services/raster/raster.types";
+import { HlmButtonImports } from "@app/shared/ui/button";
+import {
+	LucideBot,
+	LucideListTree,
+	LucideMap,
+	LucideSettings,
+	LucideTable,
+} from "@lucide/angular";
+import type { FeatureCollection } from "geojson";
+import type { EtlPipelineNode } from "../../../copilot/copilot.types";
+import type { NodeAttribute } from "../../services/editor-canvas.utils";
+import { mergeNodeConfig } from "../../services/editor-node-config.utils";
+import { EditorMapPreviewComponent } from "../editor-map-preview/editor-map-preview.component";
+import { EditorFormatAttributesTableComponent } from "./editor-format-attributes-table.component";
+import { EditorNodeAttributesTableComponent } from "./editor-node-attributes-table.component";
+import { EditorNodeParamsComponent } from "./editor-node-params.component";
 
-type InspectorTab = 'params' | 'attributes' | 'formatAttributes' | 'map';
+type InspectorTab = "params" | "attributes" | "formatAttributes" | "map";
 
 @Component({
-  selector: 'app-editor-node-panel',
-  changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [
-    LucideBot,
-    LucideSettings,
-    LucideTable,
-    LucideListTree,
-    LucideMap,
-    HlmButtonImports,
-    EditorMapPreviewComponent,
-    EditorNodeParamsComponent,
-    EditorNodeAttributesTableComponent,
-    EditorFormatAttributesTableComponent,
-  ],
-  template: `
+	selector: "app-editor-node-panel",
+	changeDetection: ChangeDetectionStrategy.OnPush,
+	imports: [
+		LucideBot,
+		LucideSettings,
+		LucideTable,
+		LucideListTree,
+		LucideMap,
+		HlmButtonImports,
+		EditorMapPreviewComponent,
+		EditorNodeParamsComponent,
+		EditorNodeAttributesTableComponent,
+		EditorFormatAttributesTableComponent,
+	],
+	template: `
     @if (node(); as selected) {
       <div class="flex h-full flex-col gap-3">
         <div class="flex items-start justify-between gap-2">
@@ -122,7 +136,11 @@ type InspectorTab = 'params' | 'attributes' | 'formatAttributes' | 'map';
 
         @if (activeTab() === 'map') {
           <div class="rounded-md border overflow-hidden flex-1 min-h-[280px]">
-            <app-editor-map-preview [collection]="preview()" [srid]="srid()" />
+            <app-editor-map-preview
+              [collection]="preview()"
+              [rasterOverlay]="rasterOverlay()"
+              [srid]="srid()"
+            />
           </div>
         }
       </div>
@@ -132,54 +150,58 @@ type InspectorTab = 'params' | 'attributes' | 'formatAttributes' | 'map';
   `,
 })
 export class EditorNodePanelComponent {
-  readonly node = input<EtlPipelineNode | null>(null);
-  readonly preview = input<FeatureCollection | null>(null);
-  readonly attributes = input<NodeAttribute[]>([]);
-  readonly srid = input(4326);
-  readonly assistantReply = input<string | null>(null);
-  readonly focusParamsToken = input(0);
+	readonly node = input<EtlPipelineNode | null>(null);
+	readonly preview = input<FeatureCollection | null>(null);
+	readonly rasterOverlay = input<MapRasterOverlay | null>(null);
+	readonly attributes = input<NodeAttribute[]>([]);
+	readonly srid = input(4326);
+	readonly assistantReply = input<string | null>(null);
+	readonly focusParamsToken = input(0);
 
-  readonly configChange = output<{ nodeId: string; config: Record<string, unknown> }>();
-  readonly fileImport = output<{ nodeId: string; file: File }>();
-  readonly askAssistant = output<void>();
+	readonly configChange = output<{
+		nodeId: string;
+		config: Record<string, unknown>;
+	}>();
+	readonly fileImport = output<{ nodeId: string; file: File }>();
+	readonly askAssistant = output<void>();
 
-  readonly activeTab = signal<InspectorTab>('params');
+	readonly activeTab = signal<InspectorTab>("params");
 
-  constructor() {
-    effect(() => {
-      if (this.focusParamsToken() > 0) {
-        this.activeTab.set('params');
-      }
-    });
-  }
+	constructor() {
+		effect(() => {
+			if (this.focusParamsToken() > 0) {
+				this.activeTab.set("params");
+			}
+		});
+	}
 
-  onConfigPatch(patch: Record<string, unknown>): void {
-    const node = this.node();
-    if (!node) {
-      return;
-    }
-    this.configChange.emit({
-      nodeId: node.id,
-      config: mergeNodeConfig(node, patch),
-    });
-  }
+	onConfigPatch(patch: Record<string, unknown>): void {
+		const node = this.node();
+		if (!node) {
+			return;
+		}
+		this.configChange.emit({
+			nodeId: node.id,
+			config: mergeNodeConfig(node, patch),
+		});
+	}
 
-  onFileSelected(event: Event): void {
-    const node = this.node();
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!node || !file) {
-      return;
-    }
-    this.fileImport.emit({ nodeId: node.id, file });
-    input.value = '';
-  }
+	onFileSelected(event: Event): void {
+		const node = this.node();
+		const input = event.target as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!node || !file) {
+			return;
+		}
+		this.fileImport.emit({ nodeId: node.id, file });
+		input.value = "";
+	}
 
-  focusParams(): void {
-    this.activeTab.set('params');
-  }
+	focusParams(): void {
+		this.activeTab.set("params");
+	}
 
-  isIoNode(node: EtlPipelineNode): boolean {
-    return node.type === 'reader' || node.type === 'writer';
-  }
+	isIoNode(node: EtlPipelineNode): boolean {
+		return node.type === "reader" || node.type === "writer";
+	}
 }

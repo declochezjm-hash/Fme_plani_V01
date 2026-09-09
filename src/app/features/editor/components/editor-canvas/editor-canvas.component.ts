@@ -1,95 +1,100 @@
 import {
-  ChangeDetectionStrategy,
-  Component,
-  ElementRef,
-  HostListener,
-  computed,
-  inject,
-  input,
-  output,
-  signal,
-  viewChild,
-} from '@angular/core';
+	ChangeDetectionStrategy,
+	Component,
+	computed,
+	type ElementRef,
+	HostListener,
+	inject,
+	input,
+	output,
+	signal,
+	viewChild,
+} from "@angular/core";
+import { HlmButtonImports } from "@app/shared/ui/button";
 import {
-  LucideMessageCircle,
-  LucidePencil,
-  LucideTrash2,
-  LucideUnlink,
-} from '@lucide/angular';
-import { HlmButtonImports } from '@app/shared/ui/button';
-import type { EtlPipelineEdge, EtlPipelineGroup, EtlPipelineJson, EtlPipelineNode } from '../../../copilot/copilot.types';
+	LucideMessageCircle,
+	LucidePencil,
+	LucideTrash2,
+	LucideUnlink,
+} from "@lucide/angular";
+import type {
+	EtlPipelineEdge,
+	EtlPipelineGroup,
+	EtlPipelineJson,
+	EtlPipelineNode,
+} from "../../../copilot/copilot.types";
+import { EditorService } from "../../editor.service";
 import {
-  computePipelineBounds,
-  findInputPortAtPoint,
-  findOutputPortAtPoint,
-  getEdgeGeometry,
-  getNodeHeight,
-  getNodePorts,
-  getPortPosition,
-  GROUP_COLOR_PALETTE,
-  GROUP_MIN_SIZE,
-  NODE_WIDTH,
-  type PortDef,
-} from '../../services/editor-canvas.utils';
-import { EditorService } from '../../editor.service';
+	computePipelineBounds,
+	findInputPortAtPoint,
+	findOutputPortAtPoint,
+	GROUP_COLOR_PALETTE,
+	GROUP_MIN_SIZE,
+	getEdgeGeometry,
+	getNodeHeight,
+	getNodePorts,
+	getPortPosition,
+	NODE_WIDTH,
+	type PortDef,
+} from "../../services/editor-canvas.utils";
 import {
-  EditorCanvasGroupComponent,
-  type GroupResizeCorner,
-} from '../editor-canvas-group/editor-canvas-group.component';
-import { EditorCanvasNodeComponent } from '../editor-canvas-node/editor-canvas-node.component';
+	EditorCanvasGroupComponent,
+	type GroupResizeCorner,
+} from "../editor-canvas-group/editor-canvas-group.component";
+import { EditorCanvasNodeComponent } from "../editor-canvas-node/editor-canvas-node.component";
 
 type ContextMenuTarget =
-  | { kind: 'node'; nodeId: string; x: number; y: number }
-  | { kind: 'edge'; edgeId: string; x: number; y: number }
-  | { kind: 'group'; groupId: string; x: number; y: number };
+	| { kind: "node"; nodeId: string; x: number; y: number }
+	| { kind: "edge"; edgeId: string; x: number; y: number }
+	| { kind: "group"; groupId: string; x: number; y: number };
 
 interface ConnectionDrag {
-  sourceNodeId: string;
-  startX: number;
-  startY: number;
-  currentX: number;
-  currentY: number;
+	sourceNodeId: string;
+	startX: number;
+	startY: number;
+	currentX: number;
+	currentY: number;
 }
 
 interface ReconnectDrag {
-  edgeId: string;
-  end: 'source' | 'target';
-  anchorX: number;
-  anchorY: number;
-  currentX: number;
-  currentY: number;
+	edgeId: string;
+	end: "source" | "target";
+	anchorX: number;
+	anchorY: number;
+	currentX: number;
+	currentY: number;
 }
 
 interface GroupResize {
-  groupId: string;
-  corner: GroupResizeCorner;
-  startX: number;
-  startY: number;
-  startPosition: { x: number; y: number };
-  startSize: { width: number; height: number };
+	groupId: string;
+	corner: GroupResizeCorner;
+	startX: number;
+	startY: number;
+	startPosition: { x: number; y: number };
+	startSize: { width: number; height: number };
 }
 
 interface PanDrag {
-  moved: boolean;
+	moved: boolean;
 }
 
 @Component({
-  selector: 'app-editor-canvas',
-  changeDetection: ChangeDetectionStrategy.OnPush,
-  host: {
-    class: 'block h-full min-h-0 w-full outline-none',
-    tabindex: '0',
-  },
-  imports: [
-    LucideMessageCircle,
-    LucidePencil,
-    LucideTrash2,
-    LucideUnlink,
-    HlmButtonImports,
-    EditorCanvasGroupComponent,
-    EditorCanvasNodeComponent,
-  ],
-  styles: `
+	selector: "app-editor-canvas",
+	changeDetection: ChangeDetectionStrategy.OnPush,
+	host: {
+		class: "block h-full min-h-0 w-full outline-none",
+		tabindex: "0",
+	},
+	imports: [
+		LucideMessageCircle,
+		LucidePencil,
+		LucideTrash2,
+		LucideUnlink,
+		HlmButtonImports,
+		EditorCanvasGroupComponent,
+		EditorCanvasNodeComponent,
+	],
+	styles: `
     .canvas-root {
       touch-action: none;
       user-select: none;
@@ -175,7 +180,7 @@ interface PanDrag {
       stroke-dasharray: 6 4;
     }
   `,
-  template: `
+	template: `
     <div
       #canvasRoot
       class="canvas-root canvas-grid relative overflow-hidden"
@@ -189,11 +194,12 @@ interface PanDrag {
       (pointerleave)="onPointerLeave($event)"
       (click)="onCanvasClick($event)"
       (contextmenu)="onCanvasContextMenu($event)"
+      (dragenter)="onCanvasDragEnter($event)"
+      (dragleave)="onCanvasDragLeave($event)"
       (dragover)="onCanvasDragOver($event)"
       (drop)="onCanvasDrop($event)"
       (wheel)="onCanvasWheel($event)"
     >
-
       <div
         class="canvas-viewport"
         [style.transform]="viewportTransform()"
@@ -490,887 +496,995 @@ interface PanDrag {
   `,
 })
 export class EditorCanvasComponent {
-  private readonly editor = inject(EditorService);
-  private readonly canvasRoot = viewChild<ElementRef<HTMLDivElement>>('canvasRoot');
-
-  readonly pipeline = input.required<EtlPipelineJson>();
-  readonly selectedNodeId = input<string | null>(null);
-  readonly selectedEdgeId = input<string | null>(null);
-  readonly dark = input(false);
-
-  readonly explainNode = output<string>();
-  readonly openInspector = output<string>();
-  readonly workspaceFileDropped = output<File>();
-
-  private readonly draggingNodeId = signal<string | null>(null);
-  private readonly dragOffset = signal({ x: 0, y: 0 });
-  private readonly draggingGroupId = signal<string | null>(null);
-  private readonly groupDragOffset = signal({ x: 0, y: 0 });
-  private readonly groupResize = signal<GroupResize | null>(null);
-  readonly panDrag = signal<PanDrag | null>(null);
-  readonly spacePressed = signal(false);
-  private activePointerId: number | null = null;
-
-  readonly groupEditSeq = signal(0);
-  readonly groupEditTargetId = signal<string | null>(null);
-  private groupHeaderPointerAt = 0;
-  readonly groupColors = GROUP_COLOR_PALETTE;
-
-  readonly connectionDrag = signal<ConnectionDrag | null>(null);
-  readonly reconnectDrag = signal<ReconnectDrag | null>(null);
-  readonly contextMenu = signal<ContextMenuTarget | null>(null);
-  readonly hoveredEdgeId = signal<string | null>(null);
-  readonly selectedGroupId = signal<string | null>(null);
-
-  readonly groups = computed(() => this.pipeline().groups ?? []);
-
-  readonly zoom = signal(1);
-  readonly pan = signal({ x: 0, y: 0 });
-
-  readonly viewportTransform = computed(
-    () => `translate(${this.pan().x}px, ${this.pan().y}px) scale(${this.zoom()})`,
-  );
-
-  readonly virtualBounds = computed(() =>
-    computePipelineBounds(this.pipeline().nodes, this.groups(), 1600),
-  );
-
-  readonly renderedEdges = computed(() =>
-    this.pipeline().edges.map((edge) => ({
-      edge,
-      geometry: this.edgeGeometry(edge),
-    })),
-  );
-
-  zoomIn(): void {
-    this.zoom.update((value) => Math.min(3, value + 0.15));
-  }
-
-  zoomOut(): void {
-    this.zoom.update((value) => Math.max(0.1, value - 0.15));
-  }
-
-  private zoomAtPoint(clientX: number, clientY: number, deltaY: number): void {
-    const root = this.canvasRoot()?.nativeElement;
-    if (!root) {
-      return;
-    }
-
-    const rect = root.getBoundingClientRect();
-    const pointerX = clientX - rect.left;
-    const pointerY = clientY - rect.top;
-    const oldZoom = this.zoom();
-    const zoomFactor = deltaY < 0 ? 1.1 : 0.9;
-    const newZoom = Math.min(3, Math.max(0.1, oldZoom * zoomFactor));
-    const pan = this.pan();
-    const worldX = (pointerX - pan.x) / oldZoom;
-    const worldY = (pointerY - pan.y) / oldZoom;
-
-    this.zoom.set(newZoom);
-    this.pan.set({
-      x: pointerX - worldX * newZoom,
-      y: pointerY - worldY * newZoom,
-    });
-  }
-
-  fitView(): void {
-    const nodes = this.pipeline().nodes;
-    const root = this.canvasRoot()?.nativeElement;
-    if (!root || nodes.length === 0) {
-      this.zoom.set(1);
-      this.pan.set({ x: 40, y: 40 });
-      return;
-    }
-
-    const padding = 48;
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-
-    const groups = this.groups();
-    for (const group of groups) {
-      minX = Math.min(minX, group.position.x);
-      minY = Math.min(minY, group.position.y);
-      maxX = Math.max(maxX, group.position.x + group.size.width);
-      maxY = Math.max(maxY, group.position.y + group.size.height);
-    }
-
-    for (const node of nodes) {
-      minX = Math.min(minX, node.position.x);
-      minY = Math.min(minY, node.position.y);
-      maxX = Math.max(maxX, node.position.x + NODE_WIDTH);
-      maxY = Math.max(maxY, node.position.y + getNodeHeight(node));
-    }
-
-    const contentWidth = maxX - minX + padding * 2;
-    const contentHeight = maxY - minY + padding * 2;
-    const rect = root.getBoundingClientRect();
-    const nextScale = Math.min(rect.width / contentWidth, rect.height / contentHeight, 1.25);
-    const panX = (rect.width - contentWidth * nextScale) / 2 - (minX - padding) * nextScale;
-    const panY = (rect.height - contentHeight * nextScale) / 2 - (minY - padding) * nextScale;
-
-    this.zoom.set(nextScale);
-    this.pan.set({ x: panX, y: panY });
-  }
-
-  onCanvasWheel(event: WheelEvent): void {
-    event.preventDefault();
-
-    if (event.ctrlKey || event.metaKey) {
-      this.zoomAtPoint(event.clientX, event.clientY, event.deltaY);
-      return;
-    }
-
-    const deltaX = event.shiftKey ? event.deltaY : event.deltaX;
-    const deltaY = event.shiftKey ? 0 : event.deltaY;
-    this.pan.update((current) => ({
-      x: current.x - deltaX,
-      y: current.y - deltaY,
-    }));
-  }
-
-  onCanvasPointerDown(event: PointerEvent): void {
-    const target = event.target as HTMLElement;
-    if (target.closest('.node-shell, .editor-group-header, .port-row, .context-menu, .edge-hit')) {
-      return;
-    }
-
-    const isMiddleClick = event.button === 1;
-    const isRightClick = event.button === 2;
-    const isSpacePan = event.button === 0 && this.spacePressed();
-
-    if (!isMiddleClick && !isRightClick && !isSpacePan) {
-      return;
-    }
-
-    event.preventDefault();
-    const canvas = this.getCanvasRoot(event);
-    if (!canvas) {
-      return;
-    }
-
-    canvas.setPointerCapture(event.pointerId);
-    this.activePointerId = event.pointerId;
-    this.panDrag.set({ moved: false });
-  }
-
-  onCanvasDragOver(event: DragEvent): void {
-    if (event.dataTransfer?.types.includes('Files')) {
-      event.preventDefault();
-      event.dataTransfer.dropEffect = 'copy';
-      return;
-    }
-    if (event.dataTransfer?.types.includes('application/gisforge-catalog-index')) {
-      event.preventDefault();
-      event.dataTransfer.dropEffect = 'copy';
-    }
-  }
-
-  onCanvasDrop(event: DragEvent): void {
-    const file = event.dataTransfer?.files?.[0];
-    if (file) {
-      const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
-      if (extension === 'fmw' || extension === 'json' || extension === 'model3') {
-        event.preventDefault();
-        this.workspaceFileDropped.emit(file);
-        return;
-      }
-    }
-
-    const raw = event.dataTransfer?.getData('application/gisforge-catalog-index');
-    if (!raw) {
-      return;
-    }
-    event.preventDefault();
-    const index = Number(raw);
-    if (!Number.isFinite(index)) {
-      return;
-    }
-    const root = this.canvasRoot()?.nativeElement;
-    if (!root) {
-      return;
-    }
-    const position = this.screenToCanvas(event.clientX, event.clientY, root);
-    this.editor.addNodeAt(index, position);
-  }
-
-  readonly nodeById = computed(() => {
-    const map = new Map<string, EtlPipelineNode>();
-    for (const node of this.pipeline().nodes) {
-      map.set(node.id, node);
-    }
-    return map;
-  });
-
-  @HostListener('document:keydown', ['$event'])
-  onKeyDown(event: KeyboardEvent): void {
-    const target = event.target as HTMLElement;
-    const isEditable =
-      target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
-
-    if (event.code === 'Space' && !isEditable) {
-      event.preventDefault();
-      this.spacePressed.set(true);
-      return;
-    }
-
-    if (event.key !== 'Delete' && event.key !== 'Backspace') {
-      return;
-    }
-
-    if (isEditable) {
-      return;
-    }
-
-    event.preventDefault();
-
-    const edgeId = this.selectedEdgeId();
-    if (edgeId) {
-      this.editor.deleteEdge(edgeId);
-      return;
-    }
-
-    const nodeId = this.selectedNodeId();
-    if (nodeId) {
-      this.editor.deleteNode(nodeId);
-      return;
-    }
-
-    const groupId = this.selectedGroupId();
-    if (groupId) {
-      this.editor.deleteGroup(groupId);
-      this.selectedGroupId.set(null);
-    }
-  }
-
-  groupColor(groupId: string): string | undefined {
-    return this.groups().find((group) => group.id === groupId)?.color;
-  }
-
-  edgeColor(): string {
-    return this.dark() ? '#94a3b8' : '#64748b';
-  }
-
-  edgeStroke(edgeId: string): string {
-    if (this.hoveredEdgeId() === edgeId || this.selectedEdgeId() === edgeId) {
-      return '#38bdf8';
-    }
-    return this.edgeColor();
-  }
-
-  edgeMarker(edgeId: string): string {
-    if (this.hoveredEdgeId() === edgeId || this.selectedEdgeId() === edgeId) {
-      return 'url(#edge-arrow-hover)';
-    }
-    return 'url(#edge-arrow)';
-  }
-
-  edgeGeometry(edge: EtlPipelineEdge) {
-    const source = this.nodeById().get(edge.source);
-    const target = this.nodeById().get(edge.target);
-    if (!source || !target) {
-      return null;
-    }
-    return getEdgeGeometry(source, target, {
-      sourcePortId: edge.sourcePort,
-      targetPortId: edge.targetPort,
-    });
-  }
-
-  guidePath(x1: number, y1: number, x2: number, y2: number): string {
-    const dx = Math.max(80, Math.abs(x2 - x1) * 0.45);
-    return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
-  }
-
-  onAddGroup(): void {
-    const selectedId = this.selectedNodeId();
-    const selectedNode = selectedId ? this.nodeById().get(selectedId) : undefined;
-    const pan = this.pan();
-    const groupId = this.editor.addGroup('Nouvelle étape', {
-      panX: pan.x,
-      panY: pan.y,
-      aroundNode: selectedNode,
-    });
-    this.selectedGroupId.set(groupId);
-    this.editor.selectNode(null);
-    this.editor.selectEdge(null);
-  }
-
-  onSelectNode(nodeId: string): void {
-    this.closeContextMenu();
-    this.selectedGroupId.set(null);
-    this.editor.selectNode(nodeId);
-  }
-
-  onOpenNodeSettings(nodeId: string): void {
-    this.closeContextMenu();
-    this.selectedGroupId.set(null);
-    this.editor.selectNode(nodeId);
-    this.openInspector.emit(nodeId);
-  }
-
-  onCanvasClick(event: MouseEvent): void {
-    if ((event.target as HTMLElement).closest('.context-menu')) {
-      return;
-    }
-    this.closeContextMenu();
-    this.editor.selectEdge(null);
-    this.selectedGroupId.set(null);
-  }
-
-  @HostListener('document:keyup', ['$event'])
-  onKeyUp(event: KeyboardEvent): void {
-    if (event.code === 'Space') {
-      this.spacePressed.set(false);
-      this.panDrag.set(null);
-    }
-  }
-
-  onCanvasContextMenu(event: MouseEvent): void {
-    event.preventDefault();
-    if (this.panDrag()?.moved) {
-      return;
-    }
-    if ((event.target as HTMLElement).closest('.node-shell, .edge-hit, .editor-group')) {
-      return;
-    }
-    this.closeContextMenu();
-  }
-
-  closeContextMenu(): void {
-    this.contextMenu.set(null);
-  }
-
-  private screenToCanvas(
-    clientX: number,
-    clientY: number,
-    canvas: HTMLElement,
-  ): { x: number; y: number } {
-    const rect = canvas.getBoundingClientRect();
-    const pan = this.pan();
-    const zoom = this.zoom();
-    return {
-      x: (clientX - rect.left - pan.x) / zoom,
-      y: (clientY - rect.top - pan.y) / zoom,
-    };
-  }
-
-  private rootCoords(event: { clientX: number; clientY: number }, canvas: HTMLElement): { x: number; y: number } {
-    const rect = canvas.getBoundingClientRect();
-    return {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
-    };
-  }
-
-  private canvasCoords(event: { clientX: number; clientY: number }, canvas: HTMLElement): { x: number; y: number } {
-    return this.screenToCanvas(event.clientX, event.clientY, canvas);
-  }
-
-  private getCanvasRoot(event: Event): HTMLElement | null {
-    return (event.currentTarget as HTMLElement | null)?.closest('.canvas-root') as HTMLElement | null;
-  }
-
-  onNodeContextMenu(event: MouseEvent, node: EtlPipelineNode): void {
-    event.preventDefault();
-    event.stopPropagation();
-
-    const canvas = this.getCanvasRoot(event);
-    if (!canvas) {
-      return;
-    }
-
-    const coords = this.rootCoords(event, canvas);
-    this.contextMenu.set({ kind: 'node', nodeId: node.id, x: coords.x, y: coords.y });
-    this.editor.selectNode(node.id);
-  }
-
-  onEdgeContextMenu(event: MouseEvent, edgeId: string): void {
-    event.preventDefault();
-    event.stopPropagation();
-
-    const canvas = this.getCanvasRoot(event);
-    if (!canvas) {
-      return;
-    }
-
-    const coords = this.rootCoords(event, canvas);
-    this.contextMenu.set({ kind: 'edge', edgeId, x: coords.x, y: coords.y });
-    this.editor.selectEdge(edgeId);
-  }
-
-  onGroupContextMenu(event: MouseEvent, group: EtlPipelineGroup): void {
-    event.preventDefault();
-    event.stopPropagation();
-
-    const canvas = this.getCanvasRoot(event);
-    if (!canvas) {
-      return;
-    }
-
-    const coords = this.rootCoords(event, canvas);
-    this.contextMenu.set({ kind: 'group', groupId: group.id, x: coords.x, y: coords.y });
-    this.selectedGroupId.set(group.id);
-    this.editor.selectNode(null);
-    this.editor.selectEdge(null);
-  }
-
-  onEdgeClick(event: MouseEvent, edgeId: string): void {
-    event.stopPropagation();
-    this.closeContextMenu();
-    this.selectedGroupId.set(null);
-    this.editor.selectEdge(edgeId);
-  }
-
-  onEdgeMouseLeave(edgeId: string): void {
-    if (this.hoveredEdgeId() === edgeId && !this.reconnectDrag()) {
-      this.hoveredEdgeId.set(null);
-    }
-  }
-
-  onDeleteEdge(edgeId: string, event: MouseEvent): void {
-    event.stopPropagation();
-    this.editor.deleteEdge(edgeId);
-    this.hoveredEdgeId.set(null);
-  }
-
-  onEdgeHandlePointerDown(event: PointerEvent, edgeId: string, end: 'source' | 'target'): void {
-    event.stopPropagation();
-    event.preventDefault();
-
-    const edge = this.pipeline().edges.find((item) => item.id === edgeId);
-    if (!edge) {
-      return;
-    }
-
-    const source = this.nodeById().get(edge.source);
-    const target = this.nodeById().get(edge.target);
-    if (!source || !target) {
-      return;
-    }
-
-    const canvas = this.getCanvasRoot(event);
-    if (!canvas) {
-      return;
-    }
-
-    const coords = this.canvasCoords(event, canvas);
-    const fixedNode = end === 'source' ? target : source;
-    const fixedPortSide = end === 'source' ? 'target' : 'source';
-    const fixedPort =
-      fixedPortSide === 'source'
-        ? getNodePorts(fixedNode).find((port) => port.side === 'right')
-        : getNodePorts(fixedNode).find((port) => port.side === 'left');
-    if (!fixedPort) {
-      return;
-    }
-
-    const anchor = getPortPosition(fixedNode, fixedPort);
-    canvas.setPointerCapture(event.pointerId);
-    this.activePointerId = event.pointerId;
-
-    this.reconnectDrag.set({
-      edgeId,
-      end,
-      anchorX: anchor.x,
-      anchorY: anchor.y,
-      currentX: coords.x,
-      currentY: coords.y,
-    });
-    this.editor.selectEdge(edgeId);
-  }
-
-  onNodePointerDown(event: PointerEvent, node: EtlPipelineNode): void {
-    if ((event.target as HTMLElement).closest('.port-row')) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-    this.closeContextMenu();
-    this.selectedGroupId.set(null);
-
-    const canvas = this.getCanvasRoot(event);
-    if (!canvas) {
-      return;
-    }
-
-    const shell = (event.currentTarget as HTMLElement).closest('.node-shell') as HTMLElement;
-    const coords = this.canvasCoords(event, canvas);
-
-    shell.setPointerCapture(event.pointerId);
-    this.activePointerId = event.pointerId;
-    this.draggingNodeId.set(node.id);
-    this.dragOffset.set({
-      x: coords.x - node.position.x,
-      y: coords.y - node.position.y,
-    });
-    this.editor.selectNode(node.id);
-  }
-
-  onContextRenameGroup(groupId: string): void {
-    this.closeContextMenu();
-    this.selectedGroupId.set(groupId);
-    this.groupEditTargetId.set(groupId);
-    this.groupEditSeq.update((value) => value + 1);
-  }
-
-  onGroupEditStarted(): void {
-    this.draggingGroupId.set(null);
-    if (this.activePointerId !== null) {
-      this.activePointerId = null;
-    }
-  }
-
-  onGroupQuickDelete(event: MouseEvent, group: EtlPipelineGroup): void {
-    event.preventDefault();
-    event.stopPropagation();
-    this.editor.deleteGroup(group.id);
-    if (this.selectedGroupId() === group.id) {
-      this.selectedGroupId.set(null);
-    }
-    this.closeContextMenu();
-  }
-
-  onGroupPointerDown(event: PointerEvent, group: EtlPipelineGroup): void {
-    if (event.button !== 0) {
-      return;
-    }
-
-    const elapsed = event.timeStamp - this.groupHeaderPointerAt;
-    this.groupHeaderPointerAt = event.timeStamp;
-    if (elapsed > 0 && elapsed < 400) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-    this.closeContextMenu();
-    this.selectedGroupId.set(group.id);
-    this.editor.selectNode(null);
-    this.editor.selectEdge(null);
-
-    const canvas = this.getCanvasRoot(event);
-    if (!canvas) {
-      return;
-    }
-
-    const coords = this.canvasCoords(event, canvas);
-    canvas.setPointerCapture(event.pointerId);
-    this.activePointerId = event.pointerId;
-    this.draggingGroupId.set(group.id);
-    this.groupDragOffset.set({
-      x: coords.x - group.position.x,
-      y: coords.y - group.position.y,
-    });
-  }
-
-  onGroupResizePointerDown(event: PointerEvent, group: EtlPipelineGroup, corner: GroupResizeCorner): void {
-    event.preventDefault();
-    event.stopPropagation();
-    this.closeContextMenu();
-    this.selectedGroupId.set(group.id);
-    this.editor.selectNode(null);
-    this.editor.selectEdge(null);
-
-    const canvas = this.getCanvasRoot(event);
-    if (!canvas) {
-      return;
-    }
-
-    const coords = this.canvasCoords(event, canvas);
-    canvas.setPointerCapture(event.pointerId);
-    this.activePointerId = event.pointerId;
-
-    this.groupResize.set({
-      groupId: group.id,
-      corner,
-      startX: coords.x,
-      startY: coords.y,
-      startPosition: { ...group.position },
-      startSize: { ...group.size },
-    });
-  }
-
-  onPortPointerDown(payload: { event: PointerEvent; nodeId: string; port: PortDef }): void {
-    const { event, nodeId, port } = payload;
-    const node = this.nodeById().get(nodeId);
-    if (!node) {
-      return;
-    }
-
-    const canvas = this.getCanvasRoot(event);
-    if (!canvas) {
-      return;
-    }
-
-    const portPos = getPortPosition(node, port);
-    const coords = this.canvasCoords(event, canvas);
-
-    canvas.setPointerCapture(event.pointerId);
-    this.activePointerId = event.pointerId;
-    this.closeContextMenu();
-
-    if (port.side === 'right') {
-      this.connectionDrag.set({
-        sourceNodeId: nodeId,
-        startX: portPos.x,
-        startY: portPos.y,
-        currentX: coords.x,
-        currentY: coords.y,
-      });
-      return;
-    }
-
-    const incoming = this.pipeline().edges.find((edge) => edge.target === nodeId);
-    const sourceNode = incoming ? this.nodeById().get(incoming.source) : null;
-    const sourcePort = sourceNode
-      ? getNodePorts(sourceNode).find((item) => item.side === 'right')
-      : null;
-    if (incoming && sourceNode && sourcePort) {
-      const anchor = getPortPosition(sourceNode, sourcePort);
-      this.reconnectDrag.set({
-        edgeId: incoming.id,
-        end: 'target',
-        anchorX: anchor.x,
-        anchorY: anchor.y,
-        currentX: coords.x,
-        currentY: coords.y,
-      });
-      this.editor.selectEdge(incoming.id);
-    }
-  }
-
-  onPointerMove(event: PointerEvent): void {
-    const canvas = this.getCanvasRoot(event);
-    if (!canvas) {
-      return;
-    }
-
-    const panDrag = this.panDrag();
-    if (panDrag) {
-      if (event.movementX !== 0 || event.movementY !== 0) {
-        this.pan.update((current) => ({
-          x: current.x + event.movementX,
-          y: current.y + event.movementY,
-        }));
-        if (
-          !panDrag.moved
-          && (Math.abs(event.movementX) > 2 || Math.abs(event.movementY) > 2)
-        ) {
-          this.panDrag.set({ moved: true });
-        }
-      }
-      return;
-    }
-
-    const coords = this.canvasCoords(event, canvas);
-
-    const connection = this.connectionDrag();
-    if (connection) {
-      this.connectionDrag.set({ ...connection, currentX: coords.x, currentY: coords.y });
-      return;
-    }
-
-    const reconnect = this.reconnectDrag();
-    if (reconnect) {
-      this.reconnectDrag.set({ ...reconnect, currentX: coords.x, currentY: coords.y });
-      return;
-    }
-
-    const resize = this.groupResize();
-    if (resize) {
-      this.applyGroupResize(coords, resize);
-      return;
-    }
-
-    const groupId = this.draggingGroupId();
-    if (groupId) {
-      const x = Math.max(0, coords.x - this.groupDragOffset().x);
-      const y = Math.max(0, coords.y - this.groupDragOffset().y);
-      this.editor.moveGroup(groupId, { x, y });
-      return;
-    }
-
-    const nodeId = this.draggingNodeId();
-    if (nodeId) {
-      const x = Math.max(0, coords.x - this.dragOffset().x);
-      const y = Math.max(0, coords.y - this.dragOffset().y);
-      this.editor.moveNode(nodeId, { x, y });
-    }
-  }
-
-  onPointerUp(event: PointerEvent): void {
-    const canvas = this.getCanvasRoot(event);
-    if (!canvas) {
-      return;
-    }
-
-    if (this.panDrag()) {
-      this.panDrag.set(null);
-    }
-
-    const coords = this.canvasCoords(event, canvas);
-    const nodes = this.pipeline().nodes;
-
-    const connection = this.connectionDrag();
-    if (connection) {
-      const target = findInputPortAtPoint(nodes, coords.x, coords.y);
-      if (target && target.nodeId !== connection.sourceNodeId) {
-        this.editor.connectNodes(connection.sourceNodeId, target.nodeId);
-      }
-      this.connectionDrag.set(null);
-    }
-
-    const reconnect = this.reconnectDrag();
-    if (reconnect) {
-      if (reconnect.end === 'target') {
-        const target = findInputPortAtPoint(nodes, coords.x, coords.y);
-        if (target) {
-          this.editor.reconnectEdge(reconnect.edgeId, target.nodeId);
-        }
-      } else {
-        const source = findOutputPortAtPoint(nodes, coords.x, coords.y);
-        if (source) {
-          this.editor.reconnectEdgeSource(reconnect.edgeId, source.nodeId);
-        }
-      }
-      this.reconnectDrag.set(null);
-    }
-
-    const nodeId = this.draggingNodeId();
-    if (nodeId) {
-      this.draggingNodeId.set(null);
-    }
-
-    const movedGroupId = this.draggingGroupId();
-    if (movedGroupId) {
-      this.draggingGroupId.set(null);
-    }
-
-    const resized = this.groupResize();
-    if (resized) {
-      this.groupResize.set(null);
-    }
-
-    if (this.activePointerId !== null) {
-      try {
-        canvas.releasePointerCapture(this.activePointerId);
-      } catch {
-        // pointer already released
-      }
-      this.activePointerId = null;
-    }
-  }
-
-  onPointerLeave(event: PointerEvent): void {
-    if (this.activePointerId === null) {
-      return;
-    }
-    this.onPointerUp(event);
-  }
-
-  onContextEdit(nodeId: string): void {
-    this.closeContextMenu();
-    this.editor.selectNode(nodeId);
-  }
-
-  onContextDeleteNode(nodeId: string): void {
-    this.closeContextMenu();
-    this.editor.deleteNode(nodeId);
-  }
-
-  onContextDetachNode(nodeId: string): void {
-    this.closeContextMenu();
-    this.editor.detachNodeEdges(nodeId);
-  }
-
-  onContextExplainNode(nodeId: string): void {
-    this.closeContextMenu();
-    this.explainNode.emit(nodeId);
-  }
-
-  onContextDeleteEdge(edgeId: string): void {
-    this.closeContextMenu();
-    this.editor.deleteEdge(edgeId);
-  }
-
-  onContextExplainEdge(edgeId: string): void {
-    this.closeContextMenu();
-    const edge = this.pipeline().edges.find((item) => item.id === edgeId);
-    if (edge) {
-      this.explainNode.emit(edge.source);
-    }
-  }
-
-  onContextDeleteGroupOnly(groupId: string): void {
-    this.closeContextMenu();
-    this.editor.deleteGroup(groupId);
-    this.selectedGroupId.set(null);
-  }
-
-  onContextDeleteGroupWithNodes(groupId: string): void {
-    this.closeContextMenu();
-    this.editor.deleteGroupWithNodes(groupId);
-    this.selectedGroupId.set(null);
-  }
-
-  onContextSetGroupColor(groupId: string, color: string): void {
-    this.editor.updateGroup(groupId, { color });
-  }
-
-  private applyGroupResize(coords: { x: number; y: number }, resize: GroupResize): void {
-    const dx = coords.x - resize.startX;
-    const dy = coords.y - resize.startY;
-    const min = GROUP_MIN_SIZE;
-
-    let x = resize.startPosition.x;
-    let y = resize.startPosition.y;
-    let width = resize.startSize.width;
-    let height = resize.startSize.height;
-
-    switch (resize.corner) {
-      case 'se':
-        width = resize.startSize.width + dx;
-        height = resize.startSize.height + dy;
-        break;
-      case 'sw':
-        x = resize.startPosition.x + dx;
-        width = resize.startSize.width - dx;
-        height = resize.startSize.height + dy;
-        break;
-      case 'ne':
-        y = resize.startPosition.y + dy;
-        width = resize.startSize.width + dx;
-        height = resize.startSize.height - dy;
-        break;
-      case 'nw':
-        x = resize.startPosition.x + dx;
-        y = resize.startPosition.y + dy;
-        width = resize.startSize.width - dx;
-        height = resize.startSize.height - dy;
-        break;
-    }
-
-    if (width < min) {
-      if (resize.corner === 'sw' || resize.corner === 'nw') {
-        x -= min - width;
-      }
-      width = min;
-    }
-
-    if (height < min) {
-      if (resize.corner === 'nw' || resize.corner === 'ne') {
-        y -= min - height;
-      }
-      height = min;
-    }
-
-    x = Math.max(0, x);
-    y = Math.max(0, y);
-
-    this.editor.resizeGroup(resize.groupId, { x, y }, { width, height });
-  }
+	private readonly editor = inject(EditorService);
+	private readonly canvasRoot =
+		viewChild<ElementRef<HTMLDivElement>>("canvasRoot");
+
+	readonly pipeline = input.required<EtlPipelineJson>();
+	readonly selectedNodeId = input<string | null>(null);
+	readonly selectedEdgeId = input<string | null>(null);
+	readonly dark = input(false);
+
+	readonly explainNode = output<string>();
+	readonly openInspector = output<string>();
+	readonly workspaceFileDropped = output<File>();
+	readonly dataFileDropped = output<File>();
+
+	readonly fileDragActive = signal(false);
+	readonly fileDragName = signal<string | null>(null);
+	private fileDragDepth = 0;
+
+	private readonly draggingNodeId = signal<string | null>(null);
+	private readonly dragOffset = signal({ x: 0, y: 0 });
+	private readonly draggingGroupId = signal<string | null>(null);
+	private readonly groupDragOffset = signal({ x: 0, y: 0 });
+	private readonly groupResize = signal<GroupResize | null>(null);
+	readonly panDrag = signal<PanDrag | null>(null);
+	readonly spacePressed = signal(false);
+	private activePointerId: number | null = null;
+
+	readonly groupEditSeq = signal(0);
+	readonly groupEditTargetId = signal<string | null>(null);
+	private groupHeaderPointerAt = 0;
+	readonly groupColors = GROUP_COLOR_PALETTE;
+
+	readonly connectionDrag = signal<ConnectionDrag | null>(null);
+	readonly reconnectDrag = signal<ReconnectDrag | null>(null);
+	readonly contextMenu = signal<ContextMenuTarget | null>(null);
+	readonly hoveredEdgeId = signal<string | null>(null);
+	readonly selectedGroupId = signal<string | null>(null);
+
+	readonly groups = computed(() => this.pipeline().groups ?? []);
+
+	readonly zoom = signal(1);
+	readonly pan = signal({ x: 0, y: 0 });
+
+	readonly viewportTransform = computed(
+		() =>
+			`translate(${this.pan().x}px, ${this.pan().y}px) scale(${this.zoom()})`,
+	);
+
+	readonly virtualBounds = computed(() =>
+		computePipelineBounds(this.pipeline().nodes, this.groups(), 1600),
+	);
+
+	readonly renderedEdges = computed(() =>
+		this.pipeline().edges.map((edge) => ({
+			edge,
+			geometry: this.edgeGeometry(edge),
+		})),
+	);
+
+	zoomIn(): void {
+		this.zoom.update((value) => Math.min(3, value + 0.15));
+	}
+
+	zoomOut(): void {
+		this.zoom.update((value) => Math.max(0.1, value - 0.15));
+	}
+
+	private zoomAtPoint(clientX: number, clientY: number, deltaY: number): void {
+		const root = this.canvasRoot()?.nativeElement;
+		if (!root) {
+			return;
+		}
+
+		const rect = root.getBoundingClientRect();
+		const pointerX = clientX - rect.left;
+		const pointerY = clientY - rect.top;
+		const oldZoom = this.zoom();
+		const zoomFactor = deltaY < 0 ? 1.1 : 0.9;
+		const newZoom = Math.min(3, Math.max(0.1, oldZoom * zoomFactor));
+		const pan = this.pan();
+		const worldX = (pointerX - pan.x) / oldZoom;
+		const worldY = (pointerY - pan.y) / oldZoom;
+
+		this.zoom.set(newZoom);
+		this.pan.set({
+			x: pointerX - worldX * newZoom,
+			y: pointerY - worldY * newZoom,
+		});
+	}
+
+	fitView(): void {
+		const nodes = this.pipeline().nodes;
+		const root = this.canvasRoot()?.nativeElement;
+		if (!root || nodes.length === 0) {
+			this.zoom.set(1);
+			this.pan.set({ x: 40, y: 40 });
+			return;
+		}
+
+		const padding = 48;
+		let minX = Infinity;
+		let minY = Infinity;
+		let maxX = -Infinity;
+		let maxY = -Infinity;
+
+		const groups = this.groups();
+		for (const group of groups) {
+			minX = Math.min(minX, group.position.x);
+			minY = Math.min(minY, group.position.y);
+			maxX = Math.max(maxX, group.position.x + group.size.width);
+			maxY = Math.max(maxY, group.position.y + group.size.height);
+		}
+
+		for (const node of nodes) {
+			minX = Math.min(minX, node.position.x);
+			minY = Math.min(minY, node.position.y);
+			maxX = Math.max(maxX, node.position.x + NODE_WIDTH);
+			maxY = Math.max(maxY, node.position.y + getNodeHeight(node));
+		}
+
+		const contentWidth = maxX - minX + padding * 2;
+		const contentHeight = maxY - minY + padding * 2;
+		const rect = root.getBoundingClientRect();
+		const nextScale = Math.min(
+			rect.width / contentWidth,
+			rect.height / contentHeight,
+			1.25,
+		);
+		const panX =
+			(rect.width - contentWidth * nextScale) / 2 -
+			(minX - padding) * nextScale;
+		const panY =
+			(rect.height - contentHeight * nextScale) / 2 -
+			(minY - padding) * nextScale;
+
+		this.zoom.set(nextScale);
+		this.pan.set({ x: panX, y: panY });
+	}
+
+	onCanvasWheel(event: WheelEvent): void {
+		event.preventDefault();
+
+		if (event.ctrlKey || event.metaKey) {
+			this.zoomAtPoint(event.clientX, event.clientY, event.deltaY);
+			return;
+		}
+
+		const deltaX = event.shiftKey ? event.deltaY : event.deltaX;
+		const deltaY = event.shiftKey ? 0 : event.deltaY;
+		this.pan.update((current) => ({
+			x: current.x - deltaX,
+			y: current.y - deltaY,
+		}));
+	}
+
+	onCanvasPointerDown(event: PointerEvent): void {
+		const target = event.target as HTMLElement;
+		if (
+			target.closest(
+				".node-shell, .editor-group-header, .port-row, .context-menu, .edge-hit",
+			)
+		) {
+			return;
+		}
+
+		const isMiddleClick = event.button === 1;
+		const isRightClick = event.button === 2;
+		const isSpacePan = event.button === 0 && this.spacePressed();
+
+		if (!isMiddleClick && !isRightClick && !isSpacePan) {
+			return;
+		}
+
+		event.preventDefault();
+		const canvas = this.getCanvasRoot(event);
+		if (!canvas) {
+			return;
+		}
+
+		canvas.setPointerCapture(event.pointerId);
+		this.activePointerId = event.pointerId;
+		this.panDrag.set({ moved: false });
+	}
+
+	onCanvasDragEnter(event: DragEvent): void {
+		if (!event.dataTransfer?.types.includes("Files")) {
+			return;
+		}
+		event.preventDefault();
+		event.stopPropagation();
+		this.fileDragDepth += 1;
+		const file = event.dataTransfer.files?.[0];
+		if (file) {
+			this.fileDragActive.set(true);
+			this.fileDragName.set(file.name);
+		}
+	}
+
+	onCanvasDragLeave(event: DragEvent): void {
+		if (!event.dataTransfer?.types.includes("Files")) {
+			return;
+		}
+		event.preventDefault();
+		event.stopPropagation();
+		this.fileDragDepth = Math.max(0, this.fileDragDepth - 1);
+		if (this.fileDragDepth === 0) {
+			this.fileDragActive.set(false);
+			this.fileDragName.set(null);
+		}
+	}
+
+	onCanvasDragOver(event: DragEvent): void {
+		if (event.dataTransfer?.types.includes("Files")) {
+			event.preventDefault();
+			event.stopPropagation();
+			event.dataTransfer.dropEffect = "copy";
+			const file = event.dataTransfer.files?.[0];
+			if (file) {
+				this.fileDragActive.set(true);
+				this.fileDragName.set(file.name);
+			}
+			return;
+		}
+		if (
+			event.dataTransfer?.types.includes("application/gisforge-catalog-index")
+		) {
+			event.preventDefault();
+			event.stopPropagation();
+			event.dataTransfer.dropEffect = "copy";
+		}
+	}
+
+	onCanvasDrop(event: DragEvent): void {
+		this.fileDragDepth = 0;
+		this.fileDragActive.set(false);
+		this.fileDragName.set(null);
+
+		if (event.dataTransfer?.files?.length) {
+			event.preventDefault();
+			return;
+		}
+
+		const raw = event.dataTransfer?.getData(
+			"application/gisforge-catalog-index",
+		);
+		if (!raw) {
+			return;
+		}
+		event.preventDefault();
+		const index = Number(raw);
+		if (!Number.isFinite(index)) {
+			return;
+		}
+		const root = this.canvasRoot()?.nativeElement;
+		if (!root) {
+			return;
+		}
+		const position = this.screenToCanvas(event.clientX, event.clientY, root);
+		this.editor.addNodeAt(index, position);
+	}
+
+	readonly nodeById = computed(() => {
+		const map = new Map<string, EtlPipelineNode>();
+		for (const node of this.pipeline().nodes) {
+			map.set(node.id, node);
+		}
+		return map;
+	});
+
+	@HostListener("document:keydown", ["$event"])
+	onKeyDown(event: KeyboardEvent): void {
+		const target = event.target as HTMLElement;
+		const isEditable =
+			target.tagName === "INPUT" ||
+			target.tagName === "TEXTAREA" ||
+			target.isContentEditable;
+
+		if (event.code === "Space" && !isEditable) {
+			event.preventDefault();
+			this.spacePressed.set(true);
+			return;
+		}
+
+		if (event.key !== "Delete" && event.key !== "Backspace") {
+			return;
+		}
+
+		if (isEditable) {
+			return;
+		}
+
+		event.preventDefault();
+
+		const edgeId = this.selectedEdgeId();
+		if (edgeId) {
+			this.editor.deleteEdge(edgeId);
+			return;
+		}
+
+		const nodeId = this.selectedNodeId();
+		if (nodeId) {
+			this.editor.deleteNode(nodeId);
+			return;
+		}
+
+		const groupId = this.selectedGroupId();
+		if (groupId) {
+			this.editor.deleteGroup(groupId);
+			this.selectedGroupId.set(null);
+		}
+	}
+
+	groupColor(groupId: string): string | undefined {
+		return this.groups().find((group) => group.id === groupId)?.color;
+	}
+
+	edgeColor(): string {
+		return this.dark() ? "#94a3b8" : "#64748b";
+	}
+
+	edgeStroke(edgeId: string): string {
+		if (this.hoveredEdgeId() === edgeId || this.selectedEdgeId() === edgeId) {
+			return "#38bdf8";
+		}
+		return this.edgeColor();
+	}
+
+	edgeMarker(edgeId: string): string {
+		if (this.hoveredEdgeId() === edgeId || this.selectedEdgeId() === edgeId) {
+			return "url(#edge-arrow-hover)";
+		}
+		return "url(#edge-arrow)";
+	}
+
+	edgeGeometry(edge: EtlPipelineEdge) {
+		const source = this.nodeById().get(edge.source);
+		const target = this.nodeById().get(edge.target);
+		if (!source || !target) {
+			return null;
+		}
+		return getEdgeGeometry(source, target, {
+			sourcePortId: edge.sourcePort,
+			targetPortId: edge.targetPort,
+		});
+	}
+
+	guidePath(x1: number, y1: number, x2: number, y2: number): string {
+		const dx = Math.max(80, Math.abs(x2 - x1) * 0.45);
+		return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+	}
+
+	onAddGroup(): void {
+		const selectedId = this.selectedNodeId();
+		const selectedNode = selectedId
+			? this.nodeById().get(selectedId)
+			: undefined;
+		const pan = this.pan();
+		const groupId = this.editor.addGroup("Nouvelle étape", {
+			panX: pan.x,
+			panY: pan.y,
+			aroundNode: selectedNode,
+		});
+		this.selectedGroupId.set(groupId);
+		this.editor.selectNode(null);
+		this.editor.selectEdge(null);
+	}
+
+	onSelectNode(nodeId: string): void {
+		this.closeContextMenu();
+		this.selectedGroupId.set(null);
+		this.editor.selectNode(nodeId);
+	}
+
+	onOpenNodeSettings(nodeId: string): void {
+		this.closeContextMenu();
+		this.selectedGroupId.set(null);
+		this.editor.selectNode(nodeId);
+		this.openInspector.emit(nodeId);
+	}
+
+	onCanvasClick(event: MouseEvent): void {
+		if ((event.target as HTMLElement).closest(".context-menu")) {
+			return;
+		}
+		this.closeContextMenu();
+		this.editor.selectEdge(null);
+		this.selectedGroupId.set(null);
+	}
+
+	@HostListener("document:keyup", ["$event"])
+	onKeyUp(event: KeyboardEvent): void {
+		if (event.code === "Space") {
+			this.spacePressed.set(false);
+			this.panDrag.set(null);
+		}
+	}
+
+	onCanvasContextMenu(event: MouseEvent): void {
+		event.preventDefault();
+		if (this.panDrag()?.moved) {
+			return;
+		}
+		if (
+			(event.target as HTMLElement).closest(
+				".node-shell, .edge-hit, .editor-group",
+			)
+		) {
+			return;
+		}
+		this.closeContextMenu();
+	}
+
+	closeContextMenu(): void {
+		this.contextMenu.set(null);
+	}
+
+	private screenToCanvas(
+		clientX: number,
+		clientY: number,
+		canvas: HTMLElement,
+	): { x: number; y: number } {
+		const rect = canvas.getBoundingClientRect();
+		const pan = this.pan();
+		const zoom = this.zoom();
+		return {
+			x: (clientX - rect.left - pan.x) / zoom,
+			y: (clientY - rect.top - pan.y) / zoom,
+		};
+	}
+
+	private rootCoords(
+		event: { clientX: number; clientY: number },
+		canvas: HTMLElement,
+	): { x: number; y: number } {
+		const rect = canvas.getBoundingClientRect();
+		return {
+			x: event.clientX - rect.left,
+			y: event.clientY - rect.top,
+		};
+	}
+
+	private canvasCoords(
+		event: { clientX: number; clientY: number },
+		canvas: HTMLElement,
+	): { x: number; y: number } {
+		return this.screenToCanvas(event.clientX, event.clientY, canvas);
+	}
+
+	private getCanvasRoot(event: Event): HTMLElement | null {
+		return (event.currentTarget as HTMLElement | null)?.closest(
+			".canvas-root",
+		) as HTMLElement | null;
+	}
+
+	onNodeContextMenu(event: MouseEvent, node: EtlPipelineNode): void {
+		event.preventDefault();
+		event.stopPropagation();
+
+		const canvas = this.getCanvasRoot(event);
+		if (!canvas) {
+			return;
+		}
+
+		const coords = this.rootCoords(event, canvas);
+		this.contextMenu.set({
+			kind: "node",
+			nodeId: node.id,
+			x: coords.x,
+			y: coords.y,
+		});
+		this.editor.selectNode(node.id);
+	}
+
+	onEdgeContextMenu(event: MouseEvent, edgeId: string): void {
+		event.preventDefault();
+		event.stopPropagation();
+
+		const canvas = this.getCanvasRoot(event);
+		if (!canvas) {
+			return;
+		}
+
+		const coords = this.rootCoords(event, canvas);
+		this.contextMenu.set({ kind: "edge", edgeId, x: coords.x, y: coords.y });
+		this.editor.selectEdge(edgeId);
+	}
+
+	onGroupContextMenu(event: MouseEvent, group: EtlPipelineGroup): void {
+		event.preventDefault();
+		event.stopPropagation();
+
+		const canvas = this.getCanvasRoot(event);
+		if (!canvas) {
+			return;
+		}
+
+		const coords = this.rootCoords(event, canvas);
+		this.contextMenu.set({
+			kind: "group",
+			groupId: group.id,
+			x: coords.x,
+			y: coords.y,
+		});
+		this.selectedGroupId.set(group.id);
+		this.editor.selectNode(null);
+		this.editor.selectEdge(null);
+	}
+
+	onEdgeClick(event: MouseEvent, edgeId: string): void {
+		event.stopPropagation();
+		this.closeContextMenu();
+		this.selectedGroupId.set(null);
+		this.editor.selectEdge(edgeId);
+	}
+
+	onEdgeMouseLeave(edgeId: string): void {
+		if (this.hoveredEdgeId() === edgeId && !this.reconnectDrag()) {
+			this.hoveredEdgeId.set(null);
+		}
+	}
+
+	onDeleteEdge(edgeId: string, event: MouseEvent): void {
+		event.stopPropagation();
+		this.editor.deleteEdge(edgeId);
+		this.hoveredEdgeId.set(null);
+	}
+
+	onEdgeHandlePointerDown(
+		event: PointerEvent,
+		edgeId: string,
+		end: "source" | "target",
+	): void {
+		event.stopPropagation();
+		event.preventDefault();
+
+		const edge = this.pipeline().edges.find((item) => item.id === edgeId);
+		if (!edge) {
+			return;
+		}
+
+		const source = this.nodeById().get(edge.source);
+		const target = this.nodeById().get(edge.target);
+		if (!source || !target) {
+			return;
+		}
+
+		const canvas = this.getCanvasRoot(event);
+		if (!canvas) {
+			return;
+		}
+
+		const coords = this.canvasCoords(event, canvas);
+		const fixedNode = end === "source" ? target : source;
+		const fixedPortSide = end === "source" ? "target" : "source";
+		const fixedPort =
+			fixedPortSide === "source"
+				? getNodePorts(fixedNode).find((port) => port.side === "right")
+				: getNodePorts(fixedNode).find((port) => port.side === "left");
+		if (!fixedPort) {
+			return;
+		}
+
+		const anchor = getPortPosition(fixedNode, fixedPort);
+		canvas.setPointerCapture(event.pointerId);
+		this.activePointerId = event.pointerId;
+
+		this.reconnectDrag.set({
+			edgeId,
+			end,
+			anchorX: anchor.x,
+			anchorY: anchor.y,
+			currentX: coords.x,
+			currentY: coords.y,
+		});
+		this.editor.selectEdge(edgeId);
+	}
+
+	onNodePointerDown(event: PointerEvent, node: EtlPipelineNode): void {
+		if ((event.target as HTMLElement).closest(".port-row")) {
+			return;
+		}
+
+		event.preventDefault();
+		event.stopPropagation();
+		this.closeContextMenu();
+		this.selectedGroupId.set(null);
+
+		const canvas = this.getCanvasRoot(event);
+		if (!canvas) {
+			return;
+		}
+
+		const shell = (event.currentTarget as HTMLElement).closest(
+			".node-shell",
+		) as HTMLElement;
+		const coords = this.canvasCoords(event, canvas);
+
+		shell.setPointerCapture(event.pointerId);
+		this.activePointerId = event.pointerId;
+		this.draggingNodeId.set(node.id);
+		this.dragOffset.set({
+			x: coords.x - node.position.x,
+			y: coords.y - node.position.y,
+		});
+		this.editor.selectNode(node.id);
+	}
+
+	onContextRenameGroup(groupId: string): void {
+		this.closeContextMenu();
+		this.selectedGroupId.set(groupId);
+		this.groupEditTargetId.set(groupId);
+		this.groupEditSeq.update((value) => value + 1);
+	}
+
+	onGroupEditStarted(): void {
+		this.draggingGroupId.set(null);
+		if (this.activePointerId !== null) {
+			this.activePointerId = null;
+		}
+	}
+
+	onGroupQuickDelete(event: MouseEvent, group: EtlPipelineGroup): void {
+		event.preventDefault();
+		event.stopPropagation();
+		this.editor.deleteGroup(group.id);
+		if (this.selectedGroupId() === group.id) {
+			this.selectedGroupId.set(null);
+		}
+		this.closeContextMenu();
+	}
+
+	onGroupPointerDown(event: PointerEvent, group: EtlPipelineGroup): void {
+		if (event.button !== 0) {
+			return;
+		}
+
+		const elapsed = event.timeStamp - this.groupHeaderPointerAt;
+		this.groupHeaderPointerAt = event.timeStamp;
+		if (elapsed > 0 && elapsed < 400) {
+			return;
+		}
+
+		event.preventDefault();
+		event.stopPropagation();
+		this.closeContextMenu();
+		this.selectedGroupId.set(group.id);
+		this.editor.selectNode(null);
+		this.editor.selectEdge(null);
+
+		const canvas = this.getCanvasRoot(event);
+		if (!canvas) {
+			return;
+		}
+
+		const coords = this.canvasCoords(event, canvas);
+		canvas.setPointerCapture(event.pointerId);
+		this.activePointerId = event.pointerId;
+		this.draggingGroupId.set(group.id);
+		this.groupDragOffset.set({
+			x: coords.x - group.position.x,
+			y: coords.y - group.position.y,
+		});
+	}
+
+	onGroupResizePointerDown(
+		event: PointerEvent,
+		group: EtlPipelineGroup,
+		corner: GroupResizeCorner,
+	): void {
+		event.preventDefault();
+		event.stopPropagation();
+		this.closeContextMenu();
+		this.selectedGroupId.set(group.id);
+		this.editor.selectNode(null);
+		this.editor.selectEdge(null);
+
+		const canvas = this.getCanvasRoot(event);
+		if (!canvas) {
+			return;
+		}
+
+		const coords = this.canvasCoords(event, canvas);
+		canvas.setPointerCapture(event.pointerId);
+		this.activePointerId = event.pointerId;
+
+		this.groupResize.set({
+			groupId: group.id,
+			corner,
+			startX: coords.x,
+			startY: coords.y,
+			startPosition: { ...group.position },
+			startSize: { ...group.size },
+		});
+	}
+
+	onPortPointerDown(payload: {
+		event: PointerEvent;
+		nodeId: string;
+		port: PortDef;
+	}): void {
+		const { event, nodeId, port } = payload;
+		const node = this.nodeById().get(nodeId);
+		if (!node) {
+			return;
+		}
+
+		const canvas = this.getCanvasRoot(event);
+		if (!canvas) {
+			return;
+		}
+
+		const portPos = getPortPosition(node, port);
+		const coords = this.canvasCoords(event, canvas);
+
+		canvas.setPointerCapture(event.pointerId);
+		this.activePointerId = event.pointerId;
+		this.closeContextMenu();
+
+		if (port.side === "right") {
+			this.connectionDrag.set({
+				sourceNodeId: nodeId,
+				startX: portPos.x,
+				startY: portPos.y,
+				currentX: coords.x,
+				currentY: coords.y,
+			});
+			return;
+		}
+
+		const incoming = this.pipeline().edges.find(
+			(edge) => edge.target === nodeId,
+		);
+		const sourceNode = incoming ? this.nodeById().get(incoming.source) : null;
+		const sourcePort = sourceNode
+			? getNodePorts(sourceNode).find((item) => item.side === "right")
+			: null;
+		if (incoming && sourceNode && sourcePort) {
+			const anchor = getPortPosition(sourceNode, sourcePort);
+			this.reconnectDrag.set({
+				edgeId: incoming.id,
+				end: "target",
+				anchorX: anchor.x,
+				anchorY: anchor.y,
+				currentX: coords.x,
+				currentY: coords.y,
+			});
+			this.editor.selectEdge(incoming.id);
+		}
+	}
+
+	onPointerMove(event: PointerEvent): void {
+		const canvas = this.getCanvasRoot(event);
+		if (!canvas) {
+			return;
+		}
+
+		const panDrag = this.panDrag();
+		if (panDrag) {
+			if (event.movementX !== 0 || event.movementY !== 0) {
+				this.pan.update((current) => ({
+					x: current.x + event.movementX,
+					y: current.y + event.movementY,
+				}));
+				if (
+					!panDrag.moved &&
+					(Math.abs(event.movementX) > 2 || Math.abs(event.movementY) > 2)
+				) {
+					this.panDrag.set({ moved: true });
+				}
+			}
+			return;
+		}
+
+		const coords = this.canvasCoords(event, canvas);
+
+		const connection = this.connectionDrag();
+		if (connection) {
+			this.connectionDrag.set({
+				...connection,
+				currentX: coords.x,
+				currentY: coords.y,
+			});
+			return;
+		}
+
+		const reconnect = this.reconnectDrag();
+		if (reconnect) {
+			this.reconnectDrag.set({
+				...reconnect,
+				currentX: coords.x,
+				currentY: coords.y,
+			});
+			return;
+		}
+
+		const resize = this.groupResize();
+		if (resize) {
+			this.applyGroupResize(coords, resize);
+			return;
+		}
+
+		const groupId = this.draggingGroupId();
+		if (groupId) {
+			const x = Math.max(0, coords.x - this.groupDragOffset().x);
+			const y = Math.max(0, coords.y - this.groupDragOffset().y);
+			this.editor.moveGroup(groupId, { x, y });
+			return;
+		}
+
+		const nodeId = this.draggingNodeId();
+		if (nodeId) {
+			const x = Math.max(0, coords.x - this.dragOffset().x);
+			const y = Math.max(0, coords.y - this.dragOffset().y);
+			this.editor.moveNode(nodeId, { x, y });
+		}
+	}
+
+	onPointerUp(event: PointerEvent): void {
+		const canvas = this.getCanvasRoot(event);
+		if (!canvas) {
+			return;
+		}
+
+		if (this.panDrag()) {
+			this.panDrag.set(null);
+		}
+
+		const coords = this.canvasCoords(event, canvas);
+		const nodes = this.pipeline().nodes;
+
+		const connection = this.connectionDrag();
+		if (connection) {
+			const target = findInputPortAtPoint(nodes, coords.x, coords.y);
+			if (target && target.nodeId !== connection.sourceNodeId) {
+				this.editor.connectNodes(connection.sourceNodeId, target.nodeId);
+			}
+			this.connectionDrag.set(null);
+		}
+
+		const reconnect = this.reconnectDrag();
+		if (reconnect) {
+			if (reconnect.end === "target") {
+				const target = findInputPortAtPoint(nodes, coords.x, coords.y);
+				if (target) {
+					this.editor.reconnectEdge(reconnect.edgeId, target.nodeId);
+				}
+			} else {
+				const source = findOutputPortAtPoint(nodes, coords.x, coords.y);
+				if (source) {
+					this.editor.reconnectEdgeSource(reconnect.edgeId, source.nodeId);
+				}
+			}
+			this.reconnectDrag.set(null);
+		}
+
+		const nodeId = this.draggingNodeId();
+		if (nodeId) {
+			this.draggingNodeId.set(null);
+		}
+
+		const movedGroupId = this.draggingGroupId();
+		if (movedGroupId) {
+			this.draggingGroupId.set(null);
+		}
+
+		const resized = this.groupResize();
+		if (resized) {
+			this.groupResize.set(null);
+		}
+
+		if (this.activePointerId !== null) {
+			try {
+				canvas.releasePointerCapture(this.activePointerId);
+			} catch {
+				// pointer already released
+			}
+			this.activePointerId = null;
+		}
+	}
+
+	onPointerLeave(event: PointerEvent): void {
+		if (this.activePointerId === null) {
+			return;
+		}
+		this.onPointerUp(event);
+	}
+
+	onContextEdit(nodeId: string): void {
+		this.closeContextMenu();
+		this.editor.selectNode(nodeId);
+	}
+
+	onContextDeleteNode(nodeId: string): void {
+		this.closeContextMenu();
+		this.editor.deleteNode(nodeId);
+	}
+
+	onContextDetachNode(nodeId: string): void {
+		this.closeContextMenu();
+		this.editor.detachNodeEdges(nodeId);
+	}
+
+	onContextExplainNode(nodeId: string): void {
+		this.closeContextMenu();
+		this.explainNode.emit(nodeId);
+	}
+
+	onContextDeleteEdge(edgeId: string): void {
+		this.closeContextMenu();
+		this.editor.deleteEdge(edgeId);
+	}
+
+	onContextExplainEdge(edgeId: string): void {
+		this.closeContextMenu();
+		const edge = this.pipeline().edges.find((item) => item.id === edgeId);
+		if (edge) {
+			this.explainNode.emit(edge.source);
+		}
+	}
+
+	onContextDeleteGroupOnly(groupId: string): void {
+		this.closeContextMenu();
+		this.editor.deleteGroup(groupId);
+		this.selectedGroupId.set(null);
+	}
+
+	onContextDeleteGroupWithNodes(groupId: string): void {
+		this.closeContextMenu();
+		this.editor.deleteGroupWithNodes(groupId);
+		this.selectedGroupId.set(null);
+	}
+
+	onContextSetGroupColor(groupId: string, color: string): void {
+		this.editor.updateGroup(groupId, { color });
+	}
+
+	private applyGroupResize(
+		coords: { x: number; y: number },
+		resize: GroupResize,
+	): void {
+		const dx = coords.x - resize.startX;
+		const dy = coords.y - resize.startY;
+		const min = GROUP_MIN_SIZE;
+
+		let x = resize.startPosition.x;
+		let y = resize.startPosition.y;
+		let width = resize.startSize.width;
+		let height = resize.startSize.height;
+
+		switch (resize.corner) {
+			case "se":
+				width = resize.startSize.width + dx;
+				height = resize.startSize.height + dy;
+				break;
+			case "sw":
+				x = resize.startPosition.x + dx;
+				width = resize.startSize.width - dx;
+				height = resize.startSize.height + dy;
+				break;
+			case "ne":
+				y = resize.startPosition.y + dy;
+				width = resize.startSize.width + dx;
+				height = resize.startSize.height - dy;
+				break;
+			case "nw":
+				x = resize.startPosition.x + dx;
+				y = resize.startPosition.y + dy;
+				width = resize.startSize.width - dx;
+				height = resize.startSize.height - dy;
+				break;
+		}
+
+		if (width < min) {
+			if (resize.corner === "sw" || resize.corner === "nw") {
+				x -= min - width;
+			}
+			width = min;
+		}
+
+		if (height < min) {
+			if (resize.corner === "nw" || resize.corner === "ne") {
+				y -= min - height;
+			}
+			height = min;
+		}
+
+		x = Math.max(0, x);
+		y = Math.max(0, y);
+
+		this.editor.resizeGroup(resize.groupId, { x, y }, { width, height });
+	}
 }
-

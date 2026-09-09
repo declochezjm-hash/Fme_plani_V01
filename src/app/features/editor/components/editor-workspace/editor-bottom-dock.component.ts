@@ -1,36 +1,52 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input, output, signal } from '@angular/core';
-import { FormsModule } from '@angular/forms';
-import { LucideChevronDown, LucideChevronUp, LucideDownload, LucideSearch, LucideTable, LucideTrash2 } from '@lucide/angular';
 import {
-  ExecutionLoggerService,
-  type ExecutionLogFilter,
-} from '@app/core/services/execution-logger.service';
-import { HlmButtonImports } from '@app/shared/ui/button';
-import { HlmInputImports } from '@app/shared/ui/input';
-import { HlmTableImports } from '@app/shared/ui/table';
-import type { FeatureCollection } from 'geojson';
-import type { NodeAttribute } from '../../services/editor-canvas.utils';
-import { EditorMapPreviewComponent } from '../editor-map-preview/editor-map-preview.component';
+	ChangeDetectionStrategy,
+	Component,
+	computed,
+	inject,
+	input,
+	output,
+	signal,
+} from "@angular/core";
+import { FormsModule } from "@angular/forms";
+import {
+	type ExecutionLogFilter,
+	ExecutionLoggerService,
+} from "@app/core/services/execution-logger.service";
+import type { MapRasterOverlay } from "@app/core/services/raster/raster.types";
+import { HlmButtonImports } from "@app/shared/ui/button";
+import { HlmInputImports } from "@app/shared/ui/input";
+import { HlmTableImports } from "@app/shared/ui/table";
+import {
+	LucideChevronDown,
+	LucideChevronUp,
+	LucideDownload,
+	LucideSearch,
+	LucideTable,
+	LucideTrash2,
+} from "@lucide/angular";
+import type { FeatureCollection } from "geojson";
+import type { NodeAttribute } from "../../services/editor-canvas.utils";
+import { EditorMapPreviewComponent } from "../editor-map-preview/editor-map-preview.component";
 
-type BottomDockTab = 'preview' | 'console' | 'attributes';
+type BottomDockTab = "preview" | "console" | "attributes";
 
 @Component({
-  selector: 'app-editor-bottom-dock',
-  changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [
-    FormsModule,
-    LucideChevronDown,
-    LucideChevronUp,
-    LucideTable,
-    LucideSearch,
-    LucideTrash2,
-    LucideDownload,
-    HlmButtonImports,
-    HlmInputImports,
-    HlmTableImports,
-    EditorMapPreviewComponent,
-  ],
-  template: `
+	selector: "app-editor-bottom-dock",
+	changeDetection: ChangeDetectionStrategy.OnPush,
+	imports: [
+		FormsModule,
+		LucideChevronDown,
+		LucideChevronUp,
+		LucideTable,
+		LucideSearch,
+		LucideTrash2,
+		LucideDownload,
+		HlmButtonImports,
+		HlmInputImports,
+		HlmTableImports,
+		EditorMapPreviewComponent,
+	],
+	template: `
     <section class="flex h-full min-h-0 flex-col border-t bg-card">
       <div class="flex h-8 shrink-0 items-center justify-between border-b px-2 gap-2">
         <div class="inline-flex gap-0.5">
@@ -86,7 +102,12 @@ type BottomDockTab = 'preview' | 'console' | 'attributes';
       @if (!collapsed()) {
         <div class="flex-1 min-h-0 overflow-hidden">
           @if (activeTab() === 'preview') {
-            <app-editor-map-preview class="block h-full" [collection]="preview()" [srid]="srid()" />
+            <app-editor-map-preview
+              class="block h-full"
+              [collection]="preview()"
+              [rasterOverlay]="rasterOverlay()"
+              [srid]="srid()"
+            />
           }
           @if (activeTab() === 'console') {
             <div class="flex h-full min-h-0 flex-col">
@@ -146,11 +167,11 @@ type BottomDockTab = 'preview' | 'console' | 'attributes';
             </div>
           }
           @if (activeTab() === 'attributes') {
-            <div class="h-full overflow-auto">
-              <table hlmTable class="w-full text-xs">
-                <thead hlmTHead class="bg-muted/50 sticky top-0">
+            <div class="flex h-full min-h-0 flex-col gap-2 overflow-hidden p-2">
+              <table hlmTable class="w-full text-xs shrink-0">
+                <thead hlmTHead class="bg-muted/50">
                   <tr hlmTr>
-                    <th hlmTh>Name</th>
+                    <th hlmTh>Attribut</th>
                     <th hlmTh>Type</th>
                   </tr>
                 </thead>
@@ -167,6 +188,35 @@ type BottomDockTab = 'preview' | 'console' | 'attributes';
                   }
                 </tbody>
               </table>
+
+              @if (attributeRows().length > 0) {
+                <div class="min-h-0 flex-1 overflow-auto rounded-md border">
+                  <table hlmTable class="w-full text-[10px]">
+                    <thead hlmTHead class="bg-muted/40 sticky top-0">
+                      <tr hlmTr>
+                        @for (attr of attributes(); track attr.name) {
+                          <th hlmTh class="font-mono whitespace-nowrap">{{ attr.name }}</th>
+                        }
+                      </tr>
+                    </thead>
+                    <tbody hlmTBody>
+                      @for (row of attributeRows(); track $index) {
+                        <tr hlmTr>
+                          @for (attr of attributes(); track attr.name) {
+                            <td hlmTd class="font-mono whitespace-nowrap max-w-[12rem] truncate">
+                              {{ formatCell(row[attr.name]) }}
+                            </td>
+                          }
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              } @else if (attributes().length > 0) {
+                <p class="text-[10px] text-muted-foreground">
+                  Importez un fichier source pour prévisualiser les valeurs attributaires.
+                </p>
+              }
             </div>
           }
         </div>
@@ -175,43 +225,60 @@ type BottomDockTab = 'preview' | 'console' | 'attributes';
   `,
 })
 export class EditorBottomDockComponent {
-  private readonly executionLogger = inject(ExecutionLoggerService);
+	private readonly executionLogger = inject(ExecutionLoggerService);
 
-  readonly preview = input<FeatureCollection | null>(null);
-  readonly attributes = input<NodeAttribute[]>([]);
-  readonly srid = input(4326);
-  readonly executionStatus = input('');
-  readonly executionProgress = input(0);
-  readonly collapsed = input(false);
+	readonly preview = input<FeatureCollection | null>(null);
+	readonly rasterOverlay = input<MapRasterOverlay | null>(null);
+	readonly attributes = input<NodeAttribute[]>([]);
+	readonly attributeRows = input<
+		Array<Record<string, string | number | boolean | null>>
+	>([]);
+	readonly srid = input(4326);
+	readonly executionStatus = input("");
+	readonly executionProgress = input(0);
+	readonly collapsed = input(false);
 
-  readonly toggleCollapsed = output<void>();
+	readonly toggleCollapsed = output<void>();
 
-  readonly activeTab = signal<BottomDockTab>('preview');
-  readonly logFilter = signal<ExecutionLogFilter>('all');
-  readonly logQuery = signal('');
+	readonly activeTab = signal<BottomDockTab>("preview");
+	readonly logFilter = signal<ExecutionLogFilter>("all");
+	readonly logQuery = signal("");
 
-  readonly logFilterOptions: Array<{ value: ExecutionLogFilter; label: string }> = [
-    { value: 'all', label: 'Tous' },
-    { value: 'info', label: 'Infos' },
-    { value: 'warn', label: 'Avertissements' },
-    { value: 'error', label: 'Erreurs' },
-  ];
+	readonly logFilterOptions: Array<{
+		value: ExecutionLogFilter;
+		label: string;
+	}> = [
+		{ value: "all", label: "Tous" },
+		{ value: "info", label: "Infos" },
+		{ value: "warn", label: "Avertissements" },
+		{ value: "error", label: "Erreurs" },
+	];
 
-  readonly filteredLogLines = computed(() =>
-    this.executionLogger
-      .filterEntries(this.logFilter(), this.logQuery())
-      .map((entry) => `${entry.timestamp} | ${entry.level.padEnd(5)} | ${entry.nodeLabel ? `[${entry.nodeLabel}] ` : ''}${entry.message}`),
-  );
+	formatCell(value: string | number | boolean | null | undefined): string {
+		if (value == null) {
+			return "—";
+		}
+		return String(value);
+	}
 
-  clearConsole(): void {
-    this.executionLogger.clear();
-  }
+	readonly filteredLogLines = computed(() =>
+		this.executionLogger
+			.filterEntries(this.logFilter(), this.logQuery())
+			.map(
+				(entry) =>
+					`${entry.timestamp} | ${entry.level.padEnd(5)} | ${entry.nodeLabel ? `[${entry.nodeLabel}] ` : ""}${entry.message}`,
+			),
+	);
 
-  downloadLog(): void {
-    this.executionLogger.downloadLogFile();
-  }
+	clearConsole(): void {
+		this.executionLogger.clear();
+	}
 
-  downloadReport(): void {
-    this.executionLogger.downloadJsonReport();
-  }
+	downloadLog(): void {
+		this.executionLogger.downloadLogFile();
+	}
+
+	downloadReport(): void {
+		this.executionLogger.downloadJsonReport();
+	}
 }
