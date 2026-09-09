@@ -1,4 +1,6 @@
 import { computed, inject, Injectable, signal } from '@angular/core';
+import { ExecutionLoggerService } from '@app/core/services/execution-logger.service';
+import { ProjectImportService } from '@app/core/services/importers/project-import.service';
 import { AuthService } from '@app/core/auth/auth.service';
 import type { Json } from '@app/core/supabase/database.types';
 import { SupabaseService } from '@app/core/supabase/supabase.service';
@@ -42,6 +44,8 @@ export class EditorService {
   private readonly runner = inject(PipelineRunnerService);
   private readonly execution = inject(PipelineExecutionService);
   private readonly copilot = inject(CopilotService);
+  private readonly projectImport = inject(ProjectImportService);
+  private readonly executionLoggerService = inject(ExecutionLoggerService);
 
   constructor() {
     this.purgeCorruptedDemoStorage();
@@ -72,7 +76,6 @@ export class EditorService {
   readonly lastError = this._lastError.asReadonly();
   readonly executionProgress = this.execution.progress;
   readonly executionStatus = this.execution.status;
-  readonly nodeCatalog = NODE_CATALOG;
 
   readonly activeProject = computed(() => {
     const id = this._activeProjectId();
@@ -232,6 +235,16 @@ export class EditorService {
     this._lastRunResult.set(null);
   }
 
+  async importProjectFile(file: File): Promise<string[]> {
+    const result = await this.projectImport.importFile(file);
+    this.injectPipeline(result.pipeline);
+    this.executionLoggerService.info(`Projet importé depuis « ${result.sourceName} » (${result.format}).`);
+    for (const warning of result.warnings) {
+      this.executionLoggerService.warn(warning);
+    }
+    return result.warnings;
+  }
+
   async askAssistant(): Promise<void> {
     const node = this.selectedNode();
     const reply = await this.copilot.explain({
@@ -250,12 +263,19 @@ export class EditorService {
 
   private remapPipelineIds(pipeline: EtlPipelineJson): EtlPipelineJson {
     const idMap = new Map<string, string>();
+    const groupIdMap = new Map<string, string>();
+
+    for (const group of pipeline.groups ?? []) {
+      groupIdMap.set(group.id, `group-${crypto.randomUUID().slice(0, 8)}`);
+    }
+
     const nodes: EtlPipelineNode[] = pipeline.nodes.map((node, index) => {
       const newId = `${node.type}-${crypto.randomUUID().slice(0, 8)}`;
       idMap.set(node.id, newId);
       return {
         ...node,
         id: newId,
+        groupId: node.groupId ? groupIdMap.get(node.groupId) ?? node.groupId : undefined,
         position: {
           x: node.position?.x ?? 80 + index * 220,
           y: node.position?.y ?? 120,
@@ -267,9 +287,16 @@ export class EditorService {
       id: `edge-${index}-${crypto.randomUUID().slice(0, 6)}`,
       source: idMap.get(edge.source) ?? edge.source,
       target: idMap.get(edge.target) ?? edge.target,
+      sourcePort: edge.sourcePort,
+      targetPort: edge.targetPort,
     }));
 
-    return { version: pipeline.version ?? 1, nodes, edges };
+    const groups = (pipeline.groups ?? []).map((group) => ({
+      ...group,
+      id: groupIdMap.get(group.id) ?? `group-${crypto.randomUUID().slice(0, 8)}`,
+    }));
+
+    return { version: pipeline.version ?? 1, nodes, edges, groups };
   }
 
   async load(): Promise<void> {
@@ -531,6 +558,13 @@ export class EditorService {
   }
 
   addNode(catalogIndex: number): void {
+    this.addNodeAt(catalogIndex, {
+      x: 80 + this._canvasPipeline().nodes.length * 40,
+      y: 80,
+    });
+  }
+
+  addNodeAt(catalogIndex: number, position: { x: number; y: number }): void {
     const item = NODE_CATALOG[catalogIndex];
     if (!item) {
       return;
@@ -542,7 +576,7 @@ export class EditorService {
       type: item.type,
       label: item.label,
       config: { ...item.defaultConfig },
-      position: { x: 80 + this._canvasPipeline().nodes.length * 40, y: 80 },
+      position: { x: Math.max(0, position.x - 90), y: Math.max(0, position.y - 30) },
     };
 
     this._canvasPipeline.update((pipeline) => ({
@@ -550,6 +584,19 @@ export class EditorService {
       nodes: [...pipeline.nodes, node],
     }));
     this._selectedNodeId.set(id);
+  }
+
+  addNodeByCategory(category: 'reader' | 'writer' | 'transformer'): void {
+    const index = NODE_CATALOG.findIndex((item) => item.category === category);
+    if (index >= 0) {
+      this.addNode(index);
+    }
+  }
+
+  stopExecution(): void {
+    this.runner.abort();
+    this._running.set(false);
+    this.executionLoggerService.warn('Exécution interrompue par l\'utilisateur.');
   }
 
   addGroup(label = 'Nouvelle étape', options?: AddGroupOptions): string {
@@ -676,14 +723,34 @@ export class EditorService {
     this._running.set(true);
     this._lastError.set(null);
     this.execution.begin();
+    this.executionLoggerService.begin(project.name);
     try {
-      const result = await this.runner.run(this._canvasPipeline(), project.default_srid);
+      const result = await this.runner.run(this._canvasPipeline(), project.default_srid, {
+        onProgress: (update) => {
+          const node = this._canvasPipeline().nodes.find((item) => item.id === update.nodeId);
+          this.executionLoggerService.info(update.message, {
+            nodeId: update.nodeId,
+            nodeLabel: node?.label,
+          });
+        },
+      });
       this._lastRunResult.set(result);
+      for (const line of result.logs) {
+        this.executionLoggerService.info(line);
+      }
+      this.executionLoggerService.finish({
+        rowsRead: result.metrics.rowsRead,
+        rowsWritten: result.metrics.rowsWritten,
+        durationMs: result.metrics.durationMs,
+        nodeResults: result.metrics.nodeResults,
+      });
       this.execution.finish();
       return result;
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Erreur ETL';
       this._lastError.set(message);
+      this.executionLoggerService.error(message);
+      this.executionLoggerService.finish({ error: message });
       this.execution.fail(message);
       const node = this.selectedNode();
       void this.copilot.diagnoseExecutionError(message, {

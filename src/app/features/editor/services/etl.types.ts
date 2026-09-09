@@ -81,19 +81,19 @@ export const NODE_CATALOG: Array<{
     type: 'reader',
     label: 'Lecture CSV',
     category: 'reader',
-    defaultConfig: { format: 'geojson', latField: 'lat', lonField: 'lon', ...IO_DEFAULTS },
+    defaultConfig: { format: 'csv', latField: 'lat', lonField: 'lon', ...IO_DEFAULTS },
   },
   {
     type: 'reader',
     label: 'Lecture JSON',
     category: 'reader',
-    defaultConfig: { format: 'geojson', ...IO_DEFAULTS },
+    defaultConfig: { format: 'json', ...IO_DEFAULTS },
   },
   {
     type: 'reader',
     label: 'Lecture IFC/BIM',
     category: 'reader',
-    defaultConfig: { format: 'geojson', ...IO_DEFAULTS },
+    defaultConfig: { format: 'ifc', ...IO_DEFAULTS },
   },
   {
     type: 'reproject',

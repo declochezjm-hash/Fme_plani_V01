@@ -5,7 +5,6 @@ import { Router } from '@angular/router';
 import { LucideBuilding2, LucideUser } from '@lucide/angular';
 import { toast } from 'ngx-sonner';
 import { AuthService } from '@app/core/auth/auth.service';
-import { OrganizationsService } from '@app/features/organizations/organizations.service';
 import { HlmButtonImports } from '@app/shared/ui/button';
 import { HlmInputImports } from '@app/shared/ui/input';
 import { HlmLabelImports } from '@app/shared/ui/label';
@@ -92,14 +91,14 @@ import { ProfileService } from './profile.service';
             Mon organisation
           </h2>
 
-          @if (organizationsService.loading()) {
+          @if (profileService.organizationLoading()) {
             <div class="space-y-3">
               <div hlmSkeleton class="h-6 w-48"></div>
               <div hlmSkeleton class="h-4 w-full"></div>
               <div hlmSkeleton class="h-4 w-2/3"></div>
             </div>
           } @else {
-            @if (organizationsService.currentOrganization(); as organization) {
+            @if (profileService.currentOrganization(); as organization) {
               <div class="space-y-4">
                 <div>
                   <p class="text-xs text-muted-foreground uppercase tracking-wide">Nom</p>
@@ -176,7 +175,6 @@ import { ProfileService } from './profile.service';
 export class ProfilePage implements OnInit {
   readonly authService = inject(AuthService);
   readonly profileService = inject(ProfileService);
-  readonly organizationsService = inject(OrganizationsService);
   private readonly router = inject(Router);
 
   formDisplayName = '';
@@ -196,7 +194,7 @@ export class ProfilePage implements OnInit {
 
   private async loadOrganization() {
     try {
-      await this.organizationsService.loadCurrent();
+      await this.profileService.loadCurrentOrganization();
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Erreur lors du chargement.';
       toast.error(message);

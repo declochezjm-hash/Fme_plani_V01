@@ -1,7 +1,11 @@
 import type { EtlPipelineGroup, EtlPipelineNode } from '../../copilot/copilot.types';
 
-export const NODE_WIDTH = 248;
-export const NODE_HEADER_HEIGHT = 34;
+export const NODE_WIDTH = 280;
+export const NODE_HEADER_HEIGHT = 40;
+export const NODE_BODY_PADDING_TOP = 8;
+export const NODE_PORT_COLUMN_PADDING_TOP = 4;
+export const NODE_PORT_ROW_HEIGHT = 20;
+export const NODE_PORT_DOT_CENTER_IN_ROW = 10;
 export const GROUP_MIN_SIZE = 120;
 export const GROUP_HEADER_OFFSET = 24;
 
@@ -65,36 +69,56 @@ export function getNodeTheme(category: NodeCategory, dark: boolean): NodeTheme {
   };
 }
 
+function withComputedPortOffsets(ports: Omit<PortDef, 'offsetY'>[]): PortDef[] {
+  const leftPorts = ports.filter((port) => port.side === 'left');
+  const rightPorts = ports.filter((port) => port.side === 'right');
+
+  const offsetFor = (_side: 'left' | 'right', index: number): number =>
+    NODE_HEADER_HEIGHT
+    + NODE_BODY_PADDING_TOP
+    + NODE_PORT_COLUMN_PADDING_TOP
+    + index * NODE_PORT_ROW_HEIGHT
+    + NODE_PORT_DOT_CENTER_IN_ROW;
+
+  return ports.map((port) => {
+    const index = (port.side === 'left' ? leftPorts : rightPorts).findIndex((item) => item.id === port.id);
+    return {
+      ...port,
+      offsetY: offsetFor(port.side, Math.max(0, index)),
+    };
+  });
+}
+
 export function getNodePorts(node: EtlPipelineNode): PortDef[] {
   if (node.type === 'writer') {
-    return [
-      { id: 'input', label: 'Input', side: 'left', offsetY: 52 },
-      { id: 'output', label: 'Output', side: 'right', offsetY: 52 },
-      { id: 'summary', label: 'Summary', side: 'right', offsetY: 76 },
-    ];
+    return withComputedPortOffsets([
+      { id: 'input', label: 'Input', side: 'left' },
+      { id: 'output', label: 'Output', side: 'right' },
+      { id: 'summary', label: 'Summary', side: 'right' },
+    ]);
   }
 
   if (node.type === 'tester' || node.type === 'topology_validator') {
-    return [
-      { id: 'input', label: 'Input', side: 'left', offsetY: 52 },
-      { id: 'passed', label: 'Passed', side: 'right', offsetY: 52 },
-      { id: 'failed', label: 'Failed', side: 'right', offsetY: 76 },
-    ];
+    return withComputedPortOffsets([
+      { id: 'input', label: 'Input', side: 'left' },
+      { id: 'passed', label: 'Passed', side: 'right' },
+      { id: 'failed', label: 'Failed', side: 'right' },
+    ]);
   }
 
   const category = getNodeCategory(node.type);
-  const ports: PortDef[] = [];
+  const ports: Omit<PortDef, 'offsetY'>[] = [];
 
   if (category !== 'reader') {
-    ports.push({ id: 'input', label: 'Input', side: 'left', offsetY: 52 });
+    ports.push({ id: 'input', label: 'Input', side: 'left' });
   }
 
   if (category !== 'writer') {
-    ports.push({ id: 'output', label: 'Output', side: 'right', offsetY: 52 });
-    ports.push({ id: 'rejected', label: 'Rejected', side: 'right', offsetY: 76 });
+    ports.push({ id: 'output', label: 'Output', side: 'right' });
+    ports.push({ id: 'rejected', label: 'Rejected', side: 'right' });
   }
 
-  return ports;
+  return withComputedPortOffsets(ports);
 }
 
 export function getNodeAttributes(node: EtlPipelineNode): NodeAttribute[] {
@@ -154,12 +178,24 @@ export function getNodeHeight(node: EtlPipelineNode): number {
   return NODE_HEADER_HEIGHT + 24 + attrCount * 18 + 16;
 }
 
+export function getPortCenterYOffset(portIndexOnSide: number): number {
+  return (
+    NODE_HEADER_HEIGHT
+    + NODE_BODY_PADDING_TOP
+    + NODE_PORT_COLUMN_PADDING_TOP
+    + portIndexOnSide * NODE_PORT_ROW_HEIGHT
+    + NODE_PORT_DOT_CENTER_IN_ROW
+  );
+}
+
 export function getPortPosition(
   node: EtlPipelineNode,
   port: PortDef,
 ): { x: number; y: number } {
+  const sidePorts = getNodePorts(node).filter((item) => item.side === port.side);
+  const index = Math.max(0, sidePorts.findIndex((item) => item.id === port.id));
   const x = port.side === 'left' ? node.position.x : node.position.x + NODE_WIDTH;
-  const y = node.position.y + port.offsetY;
+  const y = node.position.y + getPortCenterYOffset(index);
   return { x, y };
 }
 
@@ -177,6 +213,32 @@ export function defaultPortForConnection(
     );
   }
   return ports.find((port) => port.id === 'input') ?? ports.find((port) => port.side === 'left') ?? null;
+}
+
+export function resolvePortById(node: EtlPipelineNode, portId?: string): PortDef | null {
+  const ports = getNodePorts(node);
+  if (!portId) {
+    return null;
+  }
+
+  const direct = ports.find((port) => port.id === portId);
+  if (direct) {
+    return direct;
+  }
+
+  const lowered = portId.toLowerCase();
+  return (
+    ports.find((port) => port.id.toLowerCase() === lowered)
+    ?? ports.find((port) => port.label.toLowerCase() === lowered)
+    ?? ports.find((port) => port.label.toLowerCase().includes(lowered))
+    ?? ports.find((port) => lowered.includes(port.id.toLowerCase()))
+    ?? null
+  );
+}
+
+function firstPortOnSide(node: EtlPipelineNode, side: 'left' | 'right'): PortDef | null {
+  const ports = getNodePorts(node);
+  return ports.find((port) => port.side === side) ?? ports[0] ?? null;
 }
 
 export interface EdgeGeometry {
@@ -197,15 +259,35 @@ function cubicBezierPoint(
   return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3;
 }
 
+export function resolveEdgePorts(
+  source: EtlPipelineNode,
+  target: EtlPipelineNode,
+  sourcePortId?: string,
+  targetPortId?: string,
+): { sourcePort: PortDef; targetPort: PortDef } {
+  const sourcePort =
+    resolvePortById(source, sourcePortId)
+    ?? defaultPortForConnection(source, 'source')
+    ?? firstPortOnSide(source, 'right');
+  const targetPort =
+    resolvePortById(target, targetPortId)
+    ?? defaultPortForConnection(target, 'target')
+    ?? firstPortOnSide(target, 'left');
+
+  return { sourcePort: sourcePort!, targetPort: targetPort! };
+}
+
 export function getEdgeGeometry(
   source: EtlPipelineNode,
   target: EtlPipelineNode,
+  options?: { sourcePortId?: string; targetPortId?: string },
 ): EdgeGeometry | null {
-  const sourcePort = defaultPortForConnection(source, 'source');
-  const targetPort = defaultPortForConnection(target, 'target');
-  if (!sourcePort || !targetPort) {
-    return null;
-  }
+  const { sourcePort, targetPort } = resolveEdgePorts(
+    source,
+    target,
+    options?.sourcePortId,
+    options?.targetPortId,
+  );
 
   const start = getPortPosition(source, sourcePort);
   const end = getPortPosition(target, targetPort);
@@ -269,6 +351,38 @@ export const GROUP_COLOR_PALETTE = [
   '#7c3aed',
   '#0891b2',
 ];
+
+export function computePipelineBounds(
+  nodes: EtlPipelineNode[],
+  groups: EtlPipelineGroup[] = [],
+  padding = 1200,
+): { width: number; height: number; minX: number; minY: number } {
+  let minX = 0;
+  let minY = 0;
+  let maxX = 3200;
+  let maxY = 2400;
+
+  for (const group of groups) {
+    minX = Math.min(minX, group.position.x);
+    minY = Math.min(minY, group.position.y);
+    maxX = Math.max(maxX, group.position.x + group.size.width);
+    maxY = Math.max(maxY, group.position.y + group.size.height);
+  }
+
+  for (const node of nodes) {
+    minX = Math.min(minX, node.position.x);
+    minY = Math.min(minY, node.position.y);
+    maxX = Math.max(maxX, node.position.x + NODE_WIDTH);
+    maxY = Math.max(maxY, node.position.y + getNodeHeight(node));
+  }
+
+  return {
+    minX: minX - padding,
+    minY: minY - padding,
+    width: Math.max(8000, maxX - minX + padding * 2),
+    height: Math.max(8000, maxY - minY + padding * 2),
+  };
+}
 
 export function findGroupAtPoint(
   x: number,

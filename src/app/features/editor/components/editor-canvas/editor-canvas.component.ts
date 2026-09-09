@@ -1,15 +1,16 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  ElementRef,
   HostListener,
   computed,
   inject,
   input,
   output,
   signal,
+  viewChild,
 } from '@angular/core';
 import {
-  LucideBookmarkPlus,
   LucideMessageCircle,
   LucidePencil,
   LucideTrash2,
@@ -18,13 +19,16 @@ import {
 import { HlmButtonImports } from '@app/shared/ui/button';
 import type { EtlPipelineEdge, EtlPipelineGroup, EtlPipelineJson, EtlPipelineNode } from '../../../copilot/copilot.types';
 import {
+  computePipelineBounds,
   findInputPortAtPoint,
   findOutputPortAtPoint,
   getEdgeGeometry,
+  getNodeHeight,
   getNodePorts,
   getPortPosition,
   GROUP_COLOR_PALETTE,
   GROUP_MIN_SIZE,
+  NODE_WIDTH,
   type PortDef,
 } from '../../services/editor-canvas.utils';
 import { EditorService } from '../../editor.service';
@@ -65,16 +69,18 @@ interface GroupResize {
   startSize: { width: number; height: number };
 }
 
+interface PanDrag {
+  moved: boolean;
+}
+
 @Component({
   selector: 'app-editor-canvas',
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
-    class: 'block w-full outline-none',
-    style: 'min-height: 32rem; height: 32rem;',
+    class: 'block h-full min-h-0 w-full outline-none',
     tabindex: '0',
   },
   imports: [
-    LucideBookmarkPlus,
     LucideMessageCircle,
     LucidePencil,
     LucideTrash2,
@@ -90,7 +96,7 @@ interface GroupResize {
       display: block;
       width: 100%;
       height: 100%;
-      min-height: 32rem;
+      min-height: 0;
       transition: background-color 0.2s ease;
     }
     .canvas-light {
@@ -106,11 +112,25 @@ interface GroupResize {
     }
     .canvas-viewport {
       position: absolute;
-      inset: 0;
+      top: 0;
+      left: 0;
       transform-origin: 0 0;
+      min-width: 100%;
+      min-height: 100%;
+    }
+    .canvas-root.cursor-grab {
+      cursor: grab;
+    }
+    .canvas-root.cursor-grabbing {
+      cursor: grabbing;
     }
     .edge-layer {
       z-index: 1;
+      overflow: visible;
+      pointer-events: none;
+    }
+    .edge-layer .edge-hit {
+      pointer-events: all;
     }
     .edge-hit {
       cursor: pointer;
@@ -122,7 +142,7 @@ interface GroupResize {
       filter: drop-shadow(0 0 6px rgba(56, 189, 248, 1));
     }
     .groups-layer {
-      z-index: 1;
+      z-index: 0;
       pointer-events: none;
     }
     .color-swatch {
@@ -158,27 +178,33 @@ interface GroupResize {
   template: `
     <div
       #canvasRoot
-      class="canvas-root canvas-grid relative overflow-hidden rounded-lg border border-border"
+      class="canvas-root canvas-grid relative overflow-hidden"
       [class.canvas-dark]="dark()"
       [class.canvas-light]="!dark()"
+      [class.cursor-grab]="spacePressed() && !panDrag()"
+      [class.cursor-grabbing]="panDrag()"
+      (pointerdown)="onCanvasPointerDown($event)"
       (pointermove)="onPointerMove($event)"
       (pointerup)="onPointerUp($event)"
       (pointerleave)="onPointerLeave($event)"
       (click)="onCanvasClick($event)"
       (contextmenu)="onCanvasContextMenu($event)"
+      (dragover)="onCanvasDragOver($event)"
+      (drop)="onCanvasDrop($event)"
+      (wheel)="onCanvasWheel($event)"
     >
-      <div class="canvas-toolbar absolute top-2 right-2 flex gap-1 z-20">
-        <button hlmBtn variant="outline" size="sm" type="button" class="h-7 text-xs" (click)="onAddGroup()">
-          <svg lucideBookmarkPlus class="size-3.5"></svg>
-          Groupe
-        </button>
-      </div>
 
       <div
         class="canvas-viewport"
         [style.transform]="viewportTransform()"
+        [style.width.px]="virtualBounds().width"
+        [style.height.px]="virtualBounds().height"
       >
-      <svg class="edge-layer absolute inset-0 h-full w-full">
+      <svg
+        class="edge-layer absolute left-0 top-0"
+        [attr.width]="virtualBounds().width"
+        [attr.height]="virtualBounds().height"
+      >
         <defs>
           <marker
             id="edge-arrow"
@@ -226,16 +252,16 @@ interface GroupResize {
           />
         }
 
-        @for (edge of pipeline().edges; track edge.id) {
-          @if (edgeGeometry(edge); as geom) {
+        @for (item of renderedEdges(); track item.edge.id) {
+          @if (item.geometry; as geom) {
             <g
               class="edge-hit"
-              [class.edge-glow]="hoveredEdgeId() === edge.id"
-              [class.edge-selected]="selectedEdgeId() === edge.id"
-              (mouseenter)="hoveredEdgeId.set(edge.id)"
-              (mouseleave)="onEdgeMouseLeave(edge.id)"
-              (click)="onEdgeClick($event, edge.id)"
-              (contextmenu)="onEdgeContextMenu($event, edge.id)"
+              [class.edge-glow]="hoveredEdgeId() === item.edge.id"
+              [class.edge-selected]="selectedEdgeId() === item.edge.id"
+              (mouseenter)="hoveredEdgeId.set(item.edge.id)"
+              (mouseleave)="onEdgeMouseLeave(item.edge.id)"
+              (click)="onEdgeClick($event, item.edge.id)"
+              (contextmenu)="onEdgeContextMenu($event, item.edge.id)"
             >
               <path
                 [attr.d]="geom.path"
@@ -246,13 +272,13 @@ interface GroupResize {
               <path
                 [attr.d]="geom.path"
                 fill="none"
-                [attr.stroke]="edgeStroke(edge.id)"
+                [attr.stroke]="edgeStroke(item.edge.id)"
                 stroke-width="2.5"
-                [attr.marker-end]="edgeMarker(edge.id)"
+                [attr.marker-end]="edgeMarker(item.edge.id)"
                 opacity="0.9"
               />
 
-              @if (hoveredEdgeId() === edge.id || selectedEdgeId() === edge.id) {
+              @if (hoveredEdgeId() === item.edge.id || selectedEdgeId() === item.edge.id) {
                 <circle
                   class="edge-handle"
                   [attr.cx]="geom.start.x"
@@ -261,7 +287,7 @@ interface GroupResize {
                   fill="#38bdf8"
                   stroke="#fff"
                   stroke-width="1.5"
-                  (pointerdown)="onEdgeHandlePointerDown($event, edge.id, 'source')"
+                  (pointerdown)="onEdgeHandlePointerDown($event, item.edge.id, 'source')"
                 />
                 <circle
                   class="edge-handle"
@@ -271,12 +297,12 @@ interface GroupResize {
                   fill="#38bdf8"
                   stroke="#fff"
                   stroke-width="1.5"
-                  (pointerdown)="onEdgeHandlePointerDown($event, edge.id, 'target')"
+                  (pointerdown)="onEdgeHandlePointerDown($event, item.edge.id, 'target')"
                 />
                 <g
                   class="edge-delete-btn"
                   [attr.transform]="'translate(' + (geom.midpoint.x - 8) + ',' + (geom.midpoint.y - 8) + ')'"
-                  (click)="onDeleteEdge(edge.id, $event)"
+                  (click)="onDeleteEdge(item.edge.id, $event)"
                 >
                   <circle cx="8" cy="8" r="8" fill="#ef4444" />
                   <path
@@ -465,6 +491,7 @@ interface GroupResize {
 })
 export class EditorCanvasComponent {
   private readonly editor = inject(EditorService);
+  private readonly canvasRoot = viewChild<ElementRef<HTMLDivElement>>('canvasRoot');
 
   readonly pipeline = input.required<EtlPipelineJson>();
   readonly selectedNodeId = input<string | null>(null);
@@ -473,12 +500,15 @@ export class EditorCanvasComponent {
 
   readonly explainNode = output<string>();
   readonly openInspector = output<string>();
+  readonly workspaceFileDropped = output<File>();
 
   private readonly draggingNodeId = signal<string | null>(null);
   private readonly dragOffset = signal({ x: 0, y: 0 });
   private readonly draggingGroupId = signal<string | null>(null);
   private readonly groupDragOffset = signal({ x: 0, y: 0 });
   private readonly groupResize = signal<GroupResize | null>(null);
+  readonly panDrag = signal<PanDrag | null>(null);
+  readonly spacePressed = signal(false);
   private activePointerId: number | null = null;
 
   readonly groupEditSeq = signal(0);
@@ -494,12 +524,176 @@ export class EditorCanvasComponent {
 
   readonly groups = computed(() => this.pipeline().groups ?? []);
 
-  readonly scale = signal(1);
-  readonly panOffset = signal({ x: 0, y: 0 });
+  readonly zoom = signal(1);
+  readonly pan = signal({ x: 0, y: 0 });
 
   readonly viewportTransform = computed(
-    () => `translate(${this.panOffset().x}px, ${this.panOffset().y}px) scale(${this.scale()})`,
+    () => `translate(${this.pan().x}px, ${this.pan().y}px) scale(${this.zoom()})`,
   );
+
+  readonly virtualBounds = computed(() =>
+    computePipelineBounds(this.pipeline().nodes, this.groups(), 1600),
+  );
+
+  readonly renderedEdges = computed(() =>
+    this.pipeline().edges.map((edge) => ({
+      edge,
+      geometry: this.edgeGeometry(edge),
+    })),
+  );
+
+  zoomIn(): void {
+    this.zoom.update((value) => Math.min(3, value + 0.15));
+  }
+
+  zoomOut(): void {
+    this.zoom.update((value) => Math.max(0.1, value - 0.15));
+  }
+
+  private zoomAtPoint(clientX: number, clientY: number, deltaY: number): void {
+    const root = this.canvasRoot()?.nativeElement;
+    if (!root) {
+      return;
+    }
+
+    const rect = root.getBoundingClientRect();
+    const pointerX = clientX - rect.left;
+    const pointerY = clientY - rect.top;
+    const oldZoom = this.zoom();
+    const zoomFactor = deltaY < 0 ? 1.1 : 0.9;
+    const newZoom = Math.min(3, Math.max(0.1, oldZoom * zoomFactor));
+    const pan = this.pan();
+    const worldX = (pointerX - pan.x) / oldZoom;
+    const worldY = (pointerY - pan.y) / oldZoom;
+
+    this.zoom.set(newZoom);
+    this.pan.set({
+      x: pointerX - worldX * newZoom,
+      y: pointerY - worldY * newZoom,
+    });
+  }
+
+  fitView(): void {
+    const nodes = this.pipeline().nodes;
+    const root = this.canvasRoot()?.nativeElement;
+    if (!root || nodes.length === 0) {
+      this.zoom.set(1);
+      this.pan.set({ x: 40, y: 40 });
+      return;
+    }
+
+    const padding = 48;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    const groups = this.groups();
+    for (const group of groups) {
+      minX = Math.min(minX, group.position.x);
+      minY = Math.min(minY, group.position.y);
+      maxX = Math.max(maxX, group.position.x + group.size.width);
+      maxY = Math.max(maxY, group.position.y + group.size.height);
+    }
+
+    for (const node of nodes) {
+      minX = Math.min(minX, node.position.x);
+      minY = Math.min(minY, node.position.y);
+      maxX = Math.max(maxX, node.position.x + NODE_WIDTH);
+      maxY = Math.max(maxY, node.position.y + getNodeHeight(node));
+    }
+
+    const contentWidth = maxX - minX + padding * 2;
+    const contentHeight = maxY - minY + padding * 2;
+    const rect = root.getBoundingClientRect();
+    const nextScale = Math.min(rect.width / contentWidth, rect.height / contentHeight, 1.25);
+    const panX = (rect.width - contentWidth * nextScale) / 2 - (minX - padding) * nextScale;
+    const panY = (rect.height - contentHeight * nextScale) / 2 - (minY - padding) * nextScale;
+
+    this.zoom.set(nextScale);
+    this.pan.set({ x: panX, y: panY });
+  }
+
+  onCanvasWheel(event: WheelEvent): void {
+    event.preventDefault();
+
+    if (event.ctrlKey || event.metaKey) {
+      this.zoomAtPoint(event.clientX, event.clientY, event.deltaY);
+      return;
+    }
+
+    const deltaX = event.shiftKey ? event.deltaY : event.deltaX;
+    const deltaY = event.shiftKey ? 0 : event.deltaY;
+    this.pan.update((current) => ({
+      x: current.x - deltaX,
+      y: current.y - deltaY,
+    }));
+  }
+
+  onCanvasPointerDown(event: PointerEvent): void {
+    const target = event.target as HTMLElement;
+    if (target.closest('.node-shell, .editor-group-header, .port-row, .context-menu, .edge-hit')) {
+      return;
+    }
+
+    const isMiddleClick = event.button === 1;
+    const isRightClick = event.button === 2;
+    const isSpacePan = event.button === 0 && this.spacePressed();
+
+    if (!isMiddleClick && !isRightClick && !isSpacePan) {
+      return;
+    }
+
+    event.preventDefault();
+    const canvas = this.getCanvasRoot(event);
+    if (!canvas) {
+      return;
+    }
+
+    canvas.setPointerCapture(event.pointerId);
+    this.activePointerId = event.pointerId;
+    this.panDrag.set({ moved: false });
+  }
+
+  onCanvasDragOver(event: DragEvent): void {
+    if (event.dataTransfer?.types.includes('Files')) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+      return;
+    }
+    if (event.dataTransfer?.types.includes('application/gisforge-catalog-index')) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+    }
+  }
+
+  onCanvasDrop(event: DragEvent): void {
+    const file = event.dataTransfer?.files?.[0];
+    if (file) {
+      const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+      if (extension === 'fmw' || extension === 'json' || extension === 'model3') {
+        event.preventDefault();
+        this.workspaceFileDropped.emit(file);
+        return;
+      }
+    }
+
+    const raw = event.dataTransfer?.getData('application/gisforge-catalog-index');
+    if (!raw) {
+      return;
+    }
+    event.preventDefault();
+    const index = Number(raw);
+    if (!Number.isFinite(index)) {
+      return;
+    }
+    const root = this.canvasRoot()?.nativeElement;
+    if (!root) {
+      return;
+    }
+    const position = this.screenToCanvas(event.clientX, event.clientY, root);
+    this.editor.addNodeAt(index, position);
+  }
 
   readonly nodeById = computed(() => {
     const map = new Map<string, EtlPipelineNode>();
@@ -511,12 +705,21 @@ export class EditorCanvasComponent {
 
   @HostListener('document:keydown', ['$event'])
   onKeyDown(event: KeyboardEvent): void {
+    const target = event.target as HTMLElement;
+    const isEditable =
+      target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+
+    if (event.code === 'Space' && !isEditable) {
+      event.preventDefault();
+      this.spacePressed.set(true);
+      return;
+    }
+
     if (event.key !== 'Delete' && event.key !== 'Backspace') {
       return;
     }
 
-    const target = event.target as HTMLElement;
-    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+    if (isEditable) {
       return;
     }
 
@@ -569,7 +772,10 @@ export class EditorCanvasComponent {
     if (!source || !target) {
       return null;
     }
-    return getEdgeGeometry(source, target);
+    return getEdgeGeometry(source, target, {
+      sourcePortId: edge.sourcePort,
+      targetPortId: edge.targetPort,
+    });
   }
 
   guidePath(x1: number, y1: number, x2: number, y2: number): string {
@@ -580,7 +786,7 @@ export class EditorCanvasComponent {
   onAddGroup(): void {
     const selectedId = this.selectedNodeId();
     const selectedNode = selectedId ? this.nodeById().get(selectedId) : undefined;
-    const pan = this.panOffset();
+    const pan = this.pan();
     const groupId = this.editor.addGroup('Nouvelle étape', {
       panX: pan.x,
       panY: pan.y,
@@ -613,11 +819,22 @@ export class EditorCanvasComponent {
     this.selectedGroupId.set(null);
   }
 
+  @HostListener('document:keyup', ['$event'])
+  onKeyUp(event: KeyboardEvent): void {
+    if (event.code === 'Space') {
+      this.spacePressed.set(false);
+      this.panDrag.set(null);
+    }
+  }
+
   onCanvasContextMenu(event: MouseEvent): void {
+    event.preventDefault();
+    if (this.panDrag()?.moved) {
+      return;
+    }
     if ((event.target as HTMLElement).closest('.node-shell, .edge-hit, .editor-group')) {
       return;
     }
-    event.preventDefault();
     this.closeContextMenu();
   }
 
@@ -631,11 +848,11 @@ export class EditorCanvasComponent {
     canvas: HTMLElement,
   ): { x: number; y: number } {
     const rect = canvas.getBoundingClientRect();
-    const pan = this.panOffset();
-    const scale = this.scale();
+    const pan = this.pan();
+    const zoom = this.zoom();
     return {
-      x: (clientX - rect.left - pan.x) / scale,
-      y: (clientY - rect.top - pan.y) / scale,
+      x: (clientX - rect.left - pan.x) / zoom,
+      y: (clientY - rect.top - pan.y) / zoom,
     };
   }
 
@@ -931,6 +1148,23 @@ export class EditorCanvasComponent {
       return;
     }
 
+    const panDrag = this.panDrag();
+    if (panDrag) {
+      if (event.movementX !== 0 || event.movementY !== 0) {
+        this.pan.update((current) => ({
+          x: current.x + event.movementX,
+          y: current.y + event.movementY,
+        }));
+        if (
+          !panDrag.moved
+          && (Math.abs(event.movementX) > 2 || Math.abs(event.movementY) > 2)
+        ) {
+          this.panDrag.set({ moved: true });
+        }
+      }
+      return;
+    }
+
     const coords = this.canvasCoords(event, canvas);
 
     const connection = this.connectionDrag();
@@ -971,6 +1205,10 @@ export class EditorCanvasComponent {
     const canvas = this.getCanvasRoot(event);
     if (!canvas) {
       return;
+    }
+
+    if (this.panDrag()) {
+      this.panDrag.set(null);
     }
 
     const coords = this.canvasCoords(event, canvas);

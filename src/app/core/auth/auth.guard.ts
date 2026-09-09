@@ -41,7 +41,7 @@ export const guestGuard: CanActivateFn = async () => {
   await authService.whenReady();
 
   if (authService.isAuthenticated() && authService.canAccessApp()) {
-    const target = authService.mustChangePassword() ? '/my-profile' : '/';
+    const target = authService.mustChangePassword() ? '/my-profile' : '/editor';
     return router.createUrlTree([target]);
   }
 
@@ -69,6 +69,6 @@ export const roleGuard = (allowedRoles: AppRole[]): CanActivateFn => {
       return true;
     }
 
-    return router.createUrlTree(['/']);
+    return router.createUrlTree(['/editor']);
   };
 };

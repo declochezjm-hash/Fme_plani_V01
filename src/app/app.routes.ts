@@ -1,5 +1,5 @@
 import { Routes } from '@angular/router';
-import { authGuard, guestGuard, passwordChangeChildGuard, roleGuard } from './core/auth/auth.guard';
+import { authGuard, guestGuard, passwordChangeChildGuard } from './core/auth/auth.guard';
 
 export const routes: Routes = [
   {
@@ -16,8 +16,8 @@ export const routes: Routes = [
     children: [
       {
         path: '',
-        loadChildren: () =>
-          import('./features/dashboard/dashboard.routes').then((m) => m.DASHBOARD_ROUTES),
+        redirectTo: 'editor',
+        pathMatch: 'full',
       },
       {
         path: 'copilot',
@@ -26,22 +26,6 @@ export const routes: Routes = [
       {
         path: 'editor',
         loadChildren: () => import('./features/editor/editor.routes').then((m) => m.EDITOR_ROUTES),
-      },
-      {
-        path: 'users',
-        canActivate: [roleGuard(['super_admin', 'organization_admin'])],
-        loadChildren: () => import('./features/users/users.routes').then((m) => m.USERS_ROUTES),
-      },
-      {
-        path: 'groups',
-        canActivate: [roleGuard(['super_admin', 'organization_admin'])],
-        loadChildren: () => import('./features/groups/groups.routes').then((m) => m.GROUPS_ROUTES),
-      },
-      {
-        path: 'organizations',
-        canActivate: [roleGuard(['super_admin'])],
-        loadChildren: () =>
-          import('./features/organizations/organizations.routes').then((m) => m.ORGANIZATIONS_ROUTES),
       },
       {
         path: 'my-organization',
@@ -56,6 +40,6 @@ export const routes: Routes = [
   },
   {
     path: '**',
-    redirectTo: '',
+    redirectTo: 'editor',
   },
 ];

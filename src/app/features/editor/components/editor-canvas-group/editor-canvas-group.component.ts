@@ -34,7 +34,7 @@ export type GroupResizeCorner = 'nw' | 'ne' | 'sw' | 'se';
         class="editor-group-header"
         [class.editor-group-header-editing]="isEditing()"
         [style.background]="headerBackground()"
-        [style.color]="group().color"
+        [style.color]="'#ffffff'"
         [style.pointer-events]="'auto'"
         (pointerdown)="onHeaderPointerDown($event)"
         (dblclick)="onTitleDblClick($event)"
@@ -101,12 +101,13 @@ export type GroupResizeCorner = 'nw' | 'ne' | 'sw' | 'se';
   styles: `
     .editor-group {
       position: absolute;
-      z-index: 1;
-      border-width: 2px;
+      z-index: 0;
+      border-width: 1.5px;
       border-style: dashed;
-      border-radius: 10px;
-      background: color-mix(in oklch, var(--group-color) 10%, transparent);
+      border-radius: 12px;
+      background: color-mix(in oklch, var(--group-color) 8%, transparent);
       box-sizing: border-box;
+      pointer-events: none;
     }
     .editor-group-selected {
       border-style: solid;
@@ -243,7 +244,7 @@ export class EditorCanvasGroupComponent {
   }
 
   headerBackground(): string {
-    return `color-mix(in oklch, ${this.group().color} 18%, transparent)`;
+    return `color-mix(in oklch, ${this.group().color} 72%, transparent)`;
   }
 
   onHeaderPointerDown(event: PointerEvent): void {

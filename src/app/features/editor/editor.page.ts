@@ -1,308 +1,214 @@
-import { ChangeDetectionStrategy, Component, inject, OnInit, signal } from '@angular/core';
-import { FormsModule } from '@angular/forms';
 import {
-  LucideChevronDown,
-  LucideChevronUp,
-  LucideDownload,
-  LucideFileCode,
-  LucideMoon,
-  LucidePlay,
-  LucidePlus,
-  LucideSave,
-  LucideSparkles,
-  LucideSun,
-  LucideWorkflow,
-} from '@lucide/angular';
+  ChangeDetectionStrategy,
+  Component,
+  ElementRef,
+  inject,
+  OnInit,
+  signal,
+  viewChild,
+} from '@angular/core';
 import { toast } from 'ngx-sonner';
 import { UxModeService } from '@app/core/ux-mode/ux-mode.service';
-import { EditorThemeService } from './services/editor-theme.service';
+import { HlmSkeletonImports } from '@app/shared/ui/skeleton';
 import { CopilotChatComponent } from '../copilot/components/copilot-chat/copilot-chat.component';
 import type { CopilotMessage, EtlPipelineJson } from '../copilot/copilot.types';
-import { HlmButtonImports } from '@app/shared/ui/button';
-import { HlmInputImports } from '@app/shared/ui/input';
-import { HlmLabelImports } from '@app/shared/ui/label';
-import { HlmSkeletonImports } from '@app/shared/ui/skeleton';
 import { EditorCanvasComponent } from './components/editor-canvas/editor-canvas.component';
-import { EditorMapPreviewComponent } from './components/editor-map-preview/editor-map-preview.component';
 import { EditorNodePanelComponent } from './components/editor-node-panel/editor-node-panel.component';
-import { EditorExportService, type DataExportFormat } from './services/editor-export.service';
+import { EditorBottomDockComponent } from './components/editor-workspace/editor-bottom-dock.component';
+import { EditorNavigatorPanelComponent } from './components/editor-workspace/editor-navigator-panel.component';
+import { EditorRibbonBarComponent } from './components/editor-workspace/editor-ribbon-bar.component';
+import { EditorTransformerGalleryComponent } from './components/editor-workspace/editor-transformer-gallery.component';
+import { EditorThemeService } from './services/editor-theme.service';
 import { EditorService } from './editor.service';
+
+type ResizeAxis = 'left' | 'right' | 'bottom' | 'leftSplit';
+
+interface ResizeSession {
+  axis: ResizeAxis;
+  start: number;
+  initial: number;
+}
 
 @Component({
   selector: 'app-editor-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
-    FormsModule,
-    LucidePlay,
-    LucidePlus,
-    LucideSave,
-    LucideWorkflow,
-    LucideSparkles,
-    LucideDownload,
-    LucideFileCode,
-    LucideMoon,
-    LucideSun,
-    LucideChevronDown,
-    LucideChevronUp,
-    HlmButtonImports,
-    HlmInputImports,
-    HlmLabelImports,
     HlmSkeletonImports,
+    EditorRibbonBarComponent,
+    EditorNavigatorPanelComponent,
+    EditorTransformerGalleryComponent,
     EditorCanvasComponent,
     EditorNodePanelComponent,
-    EditorMapPreviewComponent,
+    EditorBottomDockComponent,
     CopilotChatComponent,
   ],
+  host: {
+    class: 'block h-full min-h-0',
+  },
   template: `
-    <div class="space-y-4">
-      <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 class="text-2xl font-bold tracking-tight flex items-center gap-2">
-            @if (uxMode.mode() === 'novice') {
-              <svg lucideSparkles class="size-6 text-primary"></svg>
-              Espace ETL guidé
-            } @else {
-              <svg lucideWorkflow class="size-6 text-primary"></svg>
-              Éditeur de pipeline
-            }
-          </h1>
-          <p class="text-muted-foreground text-sm mt-1">
-            @if (uxMode.mode() === 'novice') {
-              Décrivez votre transformation en langage naturel — zéro code.
-            } @else {
-              Canvas nodal, inspecteur et console de code pour les experts SIG.
-            }
-          </p>
-        </div>
-        <div class="flex flex-wrap gap-2">
-          @if (uxMode.mode() === 'expert') {
-            <button hlmBtn variant="outline" type="button" (click)="editorTheme.toggle()">
-              @if (editorTheme.dark()) {
-                <svg lucideSun class="size-4"></svg>
-                Clair
-              } @else {
-                <svg lucideMoon class="size-4"></svg>
-                Sombre
-              }
-            </button>
-            <button hlmBtn variant="outline" type="button" (click)="createProject()">
-              <svg lucidePlus class="size-4"></svg>
-              Nouveau projet
-            </button>
-            <button
-              hlmBtn
-              variant="outline"
-              type="button"
-              [disabled]="editorService.saving() || !editorService.activeProject()"
-              (click)="savePipeline()"
-            >
-              <svg lucideSave class="size-4"></svg>
-              Enregistrer
-            </button>
-            <button hlmBtn variant="outline" type="button" (click)="exportPythonScript()">
-              <svg lucideFileCode class="size-4"></svg>
-              Script Python
-            </button>
-          }
-          @if (editorService.activeProject(); as project) {
-            <button
-              hlmBtn
-              type="button"
-              [disabled]="editorService.saving() || editorService.running()"
-              (click)="executeProject(project.id)"
-            >
-              <svg lucidePlay class="size-4"></svg>
-              {{ editorService.running() ? 'Exécution…' : 'Exécuter' }}
-            </button>
-          }
-        </div>
-      </div>
+    <div class="-m-6 flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col overflow-hidden bg-background">
+      <app-editor-ribbon-bar
+        [dark]="editorTheme.dark()"
+        [uxMode]="uxMode.mode()"
+        [saving]="editorService.saving()"
+        [running]="editorService.running()"
+        [hasProject]="!!editorService.activeProject()"
+        (newProject)="createProject()"
+        (openProject)="openPipelineFile()"
+        (saveProject)="savePipeline()"
+        (runProject)="runActiveProject()"
+        (stopProject)="editorService.stopExecution()"
+        (zoomIn)="canvas()?.zoomIn()"
+        (zoomOut)="canvas()?.zoomOut()"
+        (fitView)="canvas()?.fitView()"
+        (addReader)="editorService.addNodeByCategory('reader')"
+        (addWriter)="editorService.addNodeByCategory('writer')"
+        (addTransformer)="editorService.addNodeByCategory('transformer')"
+        (addGroup)="addGroupFromRibbon()"
+        (toggleTheme)="editorTheme.toggle()"
+        (setUxMode)="uxMode.setMode($event)"
+      />
 
       @if (editorService.loading()) {
-        <div class="space-y-3">
-          <div hlmSkeleton class="h-10 w-full"></div>
-          <div hlmSkeleton class="h-64 w-full"></div>
-        </div>
-      } @else if (uxMode.mode() === 'novice') {
-        <div class="grid h-[calc(100dvh-11rem)] min-h-[32rem] grid-cols-1 gap-4 lg:grid-cols-2">
-          <app-copilot-chat
-            [showHeader]="true"
-            [compactActions]="true"
-            (injectPipeline)="onInjectPipeline($event)"
-            (runPipeline)="onRunFromChat($event)"
-            (applyDiagnosis)="onApplyDiagnosis($event)"
-          />
-
-          <div class="flex min-h-0 flex-col gap-2 rounded-lg border bg-card p-2">
-            <div class="flex flex-wrap items-center justify-between gap-2 px-1">
-              <p class="text-sm font-medium">Carte de résultat</p>
-              <div class="flex flex-wrap gap-1">
-                @for (format of exportFormats; track format.id) {
-                  <button
-                    hlmBtn
-                    variant="outline"
-                    size="sm"
-                    type="button"
-                    class="text-xs h-7"
-                    [disabled]="!editorService.workspacePreview()"
-                    (click)="exportData(format.id)"
-                  >
-                    <svg lucideDownload class="size-3"></svg>
-                    {{ format.label }}
-                  </button>
-                }
-              </div>
-            </div>
-
-            @if (editorService.running() || editorService.executionProgress() > 0) {
-              <div class="rounded-md border bg-muted/40 p-2 text-[10px] space-y-2 mx-1">
-                <p class="font-medium">{{ editorService.executionStatus() }}</p>
-                <div class="h-2 w-full rounded-full bg-muted overflow-hidden">
-                  <div
-                    class="h-full bg-primary transition-all duration-200"
-                    [style.width.%]="editorService.executionProgress()"
-                  ></div>
-                </div>
-                <p class="tabular-nums">{{ editorService.executionProgress() }} %</p>
-              </div>
-            }
-
-            <div class="flex-1 min-h-[400px] rounded-md border overflow-hidden">
-              <app-editor-map-preview
-                [collection]="editorService.workspacePreview()"
-                [srid]="editorService.activeProject()?.default_srid ?? 4326"
-              />
-            </div>
-          </div>
+        <div class="flex flex-1 flex-col gap-2 p-3">
+          <div hlmSkeleton class="h-8 w-full"></div>
+          <div hlmSkeleton class="flex-1 w-full"></div>
         </div>
       } @else {
-        <div class="grid gap-4 lg:grid-cols-[14rem_1fr_18rem] min-h-[32rem] items-stretch">
-          <aside class="space-y-3">
-            <div class="space-y-1">
-              <label hlmLabel for="project-select" class="text-xs">Projet</label>
-              <select
-                id="project-select"
-                class="border-input bg-background flex h-9 w-full rounded-md border px-3 text-sm"
-                [ngModel]="editorService.activeProjectId()"
-                (ngModelChange)="editorService.setActiveProject($event)"
-                name="activeProjectId"
-              >
-                @for (project of editorService.projects(); track project.id) {
-                  <option [value]="project.id">{{ project.name }}</option>
-                }
-              </select>
-            </div>
-
-            <div class="space-y-1">
-              <p class="text-xs font-medium text-muted-foreground">Ajouter un nœud</p>
-              <div class="flex flex-col gap-1">
-                @for (item of editorService.nodeCatalog; track item.label; let i = $index) {
-                  <button
-                    hlmBtn
-                    variant="ghost"
-                    size="sm"
-                    type="button"
-                    class="justify-start text-xs h-8"
-                    (click)="editorService.addNode(i)"
-                  >
-                    {{ item.label }}
-                  </button>
-                }
+        <div class="flex min-h-0 flex-1">
+          @if (leftPanelOpen()) {
+            <aside
+              class="flex shrink-0 flex-col border-r bg-card"
+              [style.width.px]="leftWidth()"
+            >
+              <div class="min-h-0 overflow-hidden" [style.height.%]="leftSplitRatio() * 100">
+                <app-editor-navigator-panel
+                  class="block h-full"
+                  [pipeline]="editorService.canvasPipeline()"
+                  [selectedNodeId]="editorService.selectedNodeId()"
+                  (selectNode)="editorService.selectNode($event)"
+                  (selectGroup)="onSelectGroup($event)"
+                />
               </div>
-            </div>
-
-            <div class="space-y-1">
-              <p class="text-xs font-medium text-muted-foreground">Exporter les données</p>
-              <div class="flex flex-col gap-1">
-                @for (format of exportFormats; track format.id) {
-                  <button
-                    hlmBtn
-                    variant="ghost"
-                    size="sm"
-                    type="button"
-                    class="justify-start text-xs h-8"
-                    [disabled]="!exportCollection()"
-                    (click)="exportData(format.id)"
-                  >
-                    <svg lucideDownload class="size-3.5"></svg>
-                    {{ format.label }}
-                  </button>
-                }
+              <div
+                class="h-1 shrink-0 cursor-row-resize bg-border/70 hover:bg-primary/40"
+                (pointerdown)="startResize($event, 'leftSplit')"
+              ></div>
+              <div class="min-h-0 flex-1 overflow-hidden">
+                <app-editor-transformer-gallery
+                  class="block h-full"
+                  (addCatalogItem)="editorService.addNode($event)"
+                />
               </div>
-            </div>
+            </aside>
+            <div
+              class="w-1 shrink-0 cursor-col-resize bg-border/70 hover:bg-primary/40"
+              (pointerdown)="startResize($event, 'left')"
+            ></div>
+          }
 
-            @if (editorService.running() || editorService.executionProgress() > 0) {
-              <div class="rounded-md border bg-muted/40 p-2 text-[10px] space-y-2">
-                <p class="font-medium">{{ editorService.executionStatus() }}</p>
-                <div class="h-2 w-full rounded-full bg-muted overflow-hidden">
-                  <div
-                    class="h-full bg-primary transition-all duration-200"
-                    [style.width.%]="editorService.executionProgress()"
-                  ></div>
-                </div>
-                <p class="tabular-nums">{{ editorService.executionProgress() }} %</p>
-              </div>
-            }
-
-            @if (editorService.lastRunResult(); as run) {
-              <div class="rounded-md border bg-muted/40 p-2 text-[10px] space-y-1">
-                <p class="font-medium">Dernière exécution</p>
-                <p>{{ run.metrics.rowsWritten }} entité(s) — {{ run.metrics.durationMs }} ms</p>
-              </div>
-            }
-          </aside>
-
-          <div class="flex flex-col gap-3 min-h-[36rem]">
-            <app-editor-canvas
-              class="flex-1 min-h-[28rem]"
-              [pipeline]="editorService.canvasPipeline()"
-              [selectedNodeId]="editorService.selectedNodeId()"
-              [selectedEdgeId]="editorService.selectedEdgeId()"
-              [dark]="editorTheme.dark()"
-              (explainNode)="onExplainNode($event)"
-              (openInspector)="onOpenInspector($event)"
-            />
-
-            <div class="rounded-lg border bg-card overflow-hidden">
-              <button
-                type="button"
-                class="flex w-full items-center justify-between px-3 py-2 text-xs font-medium hover:bg-muted/40"
-                (click)="consoleExpanded.set(!consoleExpanded())"
-              >
-                <span>Console pipeline</span>
-                @if (consoleExpanded()) {
-                  <svg lucideChevronDown class="size-4"></svg>
-                } @else {
-                  <svg lucideChevronUp class="size-4"></svg>
-                }
-              </button>
-              @if (consoleExpanded()) {
-                <div class="border-t p-3 h-36 overflow-auto">
-                  <pre class="text-[10px] font-mono whitespace-pre-wrap">{{ pipelineJson() }}</pre>
-                  @if (editorService.lastRunResult()?.logs?.length) {
-                    <p class="text-xs font-medium mt-3 mb-1">Logs d'exécution</p>
-                    <pre class="text-[10px] text-muted-foreground whitespace-pre-wrap">{{ executionLogs() }}</pre>
-                  }
-                </div>
+          <div class="flex min-w-0 flex-1 flex-col">
+            <div class="flex h-8 shrink-0 items-end gap-0.5 border-b bg-muted/20 px-2">
+              @for (tab of workspaceTabs; track tab.id) {
+                <button
+                  type="button"
+                  class="rounded-t px-3 py-1 text-[11px] font-medium"
+                  [class]="activeWorkspaceTab() === tab.id ? 'bg-card border border-b-0' : 'text-muted-foreground hover:text-foreground'"
+                  (click)="activeWorkspaceTab.set(tab.id)"
+                >
+                  {{ tab.label }}
+                </button>
               }
             </div>
+
+            <div class="relative min-h-0 flex-1">
+              @if (uxMode.mode() === 'novice') {
+                <app-copilot-chat
+                  class="absolute inset-y-0 left-0 z-10 w-full border-r bg-card lg:w-[42%]"
+                  [showHeader]="false"
+                  [compactActions]="true"
+                  (injectPipeline)="onInjectPipeline($event)"
+                  (runPipeline)="onRunFromChat($event)"
+                  (applyDiagnosis)="onApplyDiagnosis($event)"
+                />
+              }
+              <app-editor-canvas
+                #canvasRef
+                [class]="
+                  uxMode.mode() === 'novice'
+                    ? 'absolute inset-y-0 left-[42%] h-full w-[58%]'
+                    : 'absolute inset-0 h-full'
+                "
+                [pipeline]="editorService.canvasPipeline()"
+                [selectedNodeId]="editorService.selectedNodeId()"
+                [selectedEdgeId]="editorService.selectedEdgeId()"
+                [dark]="editorTheme.dark()"
+                (explainNode)="onExplainNode($event)"
+                (openInspector)="onOpenInspector($event)"
+                (workspaceFileDropped)="onWorkspaceFileDropped($event)"
+              />
+            </div>
+
+            @if (bottomPanelOpen()) {
+              <div
+                class="h-1 shrink-0 cursor-row-resize bg-border/70 hover:bg-primary/40"
+                (pointerdown)="startResize($event, 'bottom')"
+              ></div>
+              <div
+                class="shrink-0 overflow-hidden"
+                [style.height.px]="bottomCollapsed() ? 32 : bottomHeight()"
+              >
+                <app-editor-bottom-dock
+                  class="block h-full"
+                  [preview]="editorService.workspacePreview()"
+                  [attributes]="editorService.selectedNodeAttributes()"
+                  [srid]="editorService.activeProject()?.default_srid ?? 4326"
+                  [executionStatus]="editorService.executionStatus()"
+                  [executionProgress]="editorService.executionProgress()"
+                  [collapsed]="bottomCollapsed()"
+                  (toggleCollapsed)="bottomCollapsed.set(!bottomCollapsed())"
+                />
+              </div>
+            }
           </div>
 
-          <aside class="rounded-lg border bg-card p-3 overflow-y-auto min-h-[36rem] max-h-[36rem]">
-            <app-editor-node-panel
-              [node]="editorService.selectedNode()"
-              [preview]="editorService.selectedNodePreview()"
-              [attributes]="editorService.selectedNodeAttributes()"
-              [assistantReply]="editorService.assistantReply()"
-              [focusParamsToken]="inspectorFocusToken()"
-              [srid]="editorService.activeProject()?.default_srid ?? 4326"
-              (configChange)="editorService.updateNodeConfig($event.nodeId, $event.config)"
-              (fileImport)="onFileImport($event.nodeId, $event.file)"
-              (askAssistant)="onAskAssistant()"
-            />
-          </aside>
+          @if (rightPanelOpen()) {
+            <div
+              class="w-1 shrink-0 cursor-col-resize bg-border/70 hover:bg-primary/40"
+              (pointerdown)="startResize($event, 'right')"
+            ></div>
+            <aside
+              class="flex shrink-0 flex-col overflow-hidden border-l bg-card"
+              [style.width.px]="rightWidth()"
+            >
+              <p class="border-b px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Inspecteur de nœud
+              </p>
+              <div class="min-h-0 flex-1 overflow-y-auto p-2">
+                <app-editor-node-panel
+                  [node]="editorService.selectedNode()"
+                  [preview]="editorService.selectedNodePreview()"
+                  [attributes]="editorService.selectedNodeAttributes()"
+                  [assistantReply]="editorService.assistantReply()"
+                  [focusParamsToken]="inspectorFocusToken()"
+                  [srid]="editorService.activeProject()?.default_srid ?? 4326"
+                  (configChange)="editorService.updateNodeConfig($event.nodeId, $event.config)"
+                  (fileImport)="onFileImport($event.nodeId, $event.file)"
+                  (askAssistant)="onAskAssistant()"
+                />
+              </div>
+            </aside>
+          }
         </div>
       }
+
+      <input
+        #pipelineFileInput
+        type="file"
+        accept=".fmw,.json,.model3,application/json"
+        class="hidden"
+        (change)="onPipelineFileSelected($event)"
+      />
     </div>
   `,
 })
@@ -310,36 +216,27 @@ export class EditorPage implements OnInit {
   readonly editorService = inject(EditorService);
   readonly uxMode = inject(UxModeService);
   readonly editorTheme = inject(EditorThemeService);
-  private readonly exportService = inject(EditorExportService);
+  readonly canvas = viewChild<EditorCanvasComponent>('canvasRef');
+  readonly pipelineFileInput = viewChild<ElementRef<HTMLInputElement>>('pipelineFileInput');
 
-  readonly consoleExpanded = signal(false);
   readonly inspectorFocusToken = signal(0);
+  readonly leftPanelOpen = signal(true);
+  readonly rightPanelOpen = signal(true);
+  readonly bottomPanelOpen = signal(true);
+  readonly bottomCollapsed = signal(false);
 
-  readonly exportFormats: Array<{ id: DataExportFormat; label: string }> = [
-    { id: 'geojson', label: 'GeoJSON' },
-    { id: 'csv', label: 'CSV' },
-    { id: 'shapefile', label: 'Shapefile (.zip)' },
-    { id: 'geopackage', label: 'GeoPackage' },
-    { id: 'parquet', label: 'Parquet' },
-  ];
+  readonly leftWidth = signal(248);
+  readonly rightWidth = signal(320);
+  readonly bottomHeight = signal(220);
+  readonly leftSplitRatio = signal(0.52);
+
+  readonly activeWorkspaceTab = signal('main');
+  readonly workspaceTabs = [{ id: 'main', label: 'Main Workspace' }];
+
+  private resizeSession: ResizeSession | null = null;
 
   ngOnInit(): void {
     void this.refresh();
-  }
-
-  exportCollection() {
-    return (
-      this.editorService.lastRunResult()?.output?.collection ??
-      this.editorService.workspacePreview()
-    );
-  }
-
-  pipelineJson(): string {
-    return JSON.stringify(this.editorService.canvasPipeline(), null, 2);
-  }
-
-  executionLogs(): string {
-    return (this.editorService.lastRunResult()?.logs ?? []).join('\n');
   }
 
   async refresh(): Promise<void> {
@@ -348,6 +245,104 @@ export class EditorPage implements OnInit {
       this.editorService.ensureDemoPipelineOnLoad();
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Erreur lors du chargement.';
+      toast.error(message);
+    }
+  }
+
+  startResize(event: PointerEvent, axis: ResizeAxis): void {
+    event.preventDefault();
+    const start = axis === 'left' || axis === 'right' ? event.clientX : event.clientY;
+    const initial =
+      axis === 'left'
+        ? this.leftWidth()
+        : axis === 'right'
+          ? this.rightWidth()
+          : axis === 'bottom'
+            ? this.bottomHeight()
+            : this.leftSplitRatio();
+
+    this.resizeSession = { axis, start, initial };
+
+    const onMove = (moveEvent: PointerEvent) => {
+      const session = this.resizeSession;
+      if (!session) {
+        return;
+      }
+
+      if (session.axis === 'left') {
+        const delta = moveEvent.clientX - session.start;
+        this.leftWidth.set(Math.min(420, Math.max(180, session.initial + delta)));
+        return;
+      }
+
+      if (session.axis === 'right') {
+        const delta = session.start - moveEvent.clientX;
+        this.rightWidth.set(Math.min(520, Math.max(240, session.initial + delta)));
+        return;
+      }
+
+      if (session.axis === 'bottom') {
+        const delta = session.start - moveEvent.clientY;
+        this.bottomHeight.set(Math.min(480, Math.max(120, session.initial + delta)));
+        this.bottomCollapsed.set(false);
+        return;
+      }
+
+      const container = (event.target as HTMLElement).closest('aside');
+      const total = container?.clientHeight ?? 600;
+      const delta = moveEvent.clientY - session.start;
+      const next = session.initial + delta / total;
+      this.leftSplitRatio.set(Math.min(0.78, Math.max(0.22, next)));
+    };
+
+    const onUp = () => {
+      this.resizeSession = null;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }
+
+  addGroupFromRibbon(): void {
+    const pan = this.canvas()?.pan() ?? { x: 0, y: 0 };
+    this.editorService.addGroup('Bookmark', { panX: pan.x, panY: pan.y });
+  }
+
+  onSelectGroup(_groupId: string): void {
+    // Group selection is handled on canvas; navigator acts as quick access.
+  }
+
+  openPipelineFile(): void {
+    this.pipelineFileInput()?.nativeElement.click();
+  }
+
+  async onPipelineFileSelected(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    try {
+      await this.onWorkspaceFileDropped(file);
+    } finally {
+      input.value = '';
+    }
+  }
+
+  async onWorkspaceFileDropped(file: File): Promise<void> {
+    try {
+      const warnings = await this.editorService.importProjectFile(file);
+      this.bottomCollapsed.set(false);
+      this.canvas()?.fitView();
+      toast.success(`Projet « ${file.name} » importé.`);
+      if (warnings.length > 0) {
+        toast.message(`Import terminé avec ${warnings.length} avertissement(s). Consultez la console.`);
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Erreur lors de l\'import.';
       toast.error(message);
     }
   }
@@ -396,45 +391,13 @@ export class EditorPage implements OnInit {
     }
   }
 
-  exportPythonScript(): void {
+  async runActiveProject(): Promise<void> {
     const project = this.editorService.activeProject();
-    this.exportService.exportPythonScript(
-      this.editorService.canvasPipeline(),
-      project?.name ?? 'pipeline',
-    );
-    toast.success('Script Python téléchargé.');
-  }
-
-  async exportData(format: DataExportFormat): Promise<void> {
-    const collection = this.exportCollection();
-    if (!collection) {
-      toast.error('Aucune donnée à exporter. Exécutez d\'abord le pipeline.');
+    if (!project) {
+      toast.error('Aucun projet actif.');
       return;
     }
-
-    try {
-      switch (format) {
-        case 'geojson':
-          this.exportService.exportGeoJson(collection);
-          break;
-        case 'csv':
-          this.exportService.exportCsv(collection);
-          break;
-        case 'shapefile':
-          await this.exportService.exportShapefileZip(collection);
-          break;
-        case 'geopackage':
-          await this.exportService.exportGeoPackage(collection);
-          break;
-        case 'parquet':
-          await this.exportService.exportParquet(collection);
-          break;
-      }
-      toast.success(`Export ${format} téléchargé.`);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Erreur export.';
-      toast.error(message);
-    }
+    await this.executeProject(project.id);
   }
 
   async executeProject(projectId: string): Promise<void> {
@@ -465,7 +428,7 @@ export class EditorPage implements OnInit {
   private async explainSelectedNode(): Promise<void> {
     try {
       await this.editorService.askAssistant();
-      toast.success('Explication du nœud disponible dans le panneau latéral.');
+      toast.success('Explication du nœud disponible dans l\'inspecteur.');
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Erreur assistant.';
       toast.error(message);

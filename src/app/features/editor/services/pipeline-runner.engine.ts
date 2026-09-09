@@ -3,15 +3,20 @@ import type { EtlDataset, PipelineRunResult, TransformerContext } from './etl.ty
 import type { PipelineExecutionProgress } from './pipeline-execution.service';
 import { readDataset } from './readers/reader.registry';
 import { bufferDataset } from './transformers/buffer.transformer';
+import { clipDataset } from './transformers/clip.transformer';
 import { reprojectDataset } from './transformers/reproject.transformer';
+import { testerDataset } from './transformers/tester.transformer';
 import { topologyDataset } from './transformers/topology.transformer';
 
 export type PipelineProgressReporter = (update: PipelineExecutionProgress) => void;
+
+export type PipelineAbortChecker = () => boolean;
 
 export async function executePipeline(
   pipeline: EtlPipelineJson,
   defaultSrid = 4326,
   onProgress?: PipelineProgressReporter,
+  isAborted?: PipelineAbortChecker,
 ): Promise<PipelineRunResult> {
   const started = performance.now();
   const logs: string[] = [];
@@ -31,6 +36,10 @@ export async function executePipeline(
   onProgress?.({ percent: 0, message: 'Démarrage du pipeline…' });
 
   for (let index = 0; index < order.length; index++) {
+    if (isAborted?.()) {
+      throw new Error('Exécution annulée par l\'utilisateur.');
+    }
+
     const nodeId = order[index];
     const node = pipeline.nodes.find((item) => item.id === nodeId);
     if (!node) {
@@ -73,8 +82,11 @@ export async function executePipeline(
       case 'topology_validator':
         dataset = topologyDataset(context);
         break;
+      case 'tester':
+        dataset = testerDataset(context);
+        break;
       case 'clip':
-        dataset = { ...input, meta: { ...input.meta, clipped: true } };
+        dataset = clipDataset(context);
         break;
       case 'writer':
         dataset = input;

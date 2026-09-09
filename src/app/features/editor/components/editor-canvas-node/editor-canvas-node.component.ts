@@ -62,8 +62,8 @@ import {
         </button>
       </div>
 
-      <div class="node-body grid grid-cols-[4.5rem_1fr_4.5rem] gap-1 px-2 py-2 text-[10px]">
-        <div class="flex flex-col gap-1.5 pt-1">
+      <div class="node-body grid grid-cols-[minmax(4.5rem,auto)_minmax(0,1fr)_minmax(5.5rem,auto)] gap-1 px-2 py-2 text-[10px]">
+        <div class="port-column port-column-left flex flex-col gap-1.5 pt-1">
           @for (port of leftPorts(); track port.id) {
             <button
               type="button"
@@ -72,29 +72,29 @@ import {
               (pointerdown)="onPortPointerDown($event, port)"
             >
               <span class="port-dot" [style.background]="theme().border"></span>
-              <span class="truncate">{{ port.label }}</span>
+              <span class="port-label">{{ port.label }}</span>
             </button>
           }
         </div>
 
-        <div class="flex flex-col gap-0.5 border-x border-border/50 px-1.5">
+        <div class="attr-column flex min-w-0 flex-col gap-0.5 border-x border-border/50 px-1.5">
           <p class="text-[9px] font-medium text-muted-foreground uppercase tracking-wider mb-0.5">Attributs</p>
           @for (attr of attributes(); track attr.name) {
-            <div class="attr-row flex items-center justify-between gap-1 font-mono">
-              <span class="truncate text-foreground/90">{{ attr.name }}</span>
+            <div class="attr-row flex items-center justify-between gap-1 font-mono min-w-0">
+              <span class="attr-name text-foreground/90">{{ attr.name }}</span>
               <span class="attr-type shrink-0 rounded px-1 py-0 text-[8px]">{{ attr.type }}</span>
             </div>
           }
         </div>
 
-        <div class="flex flex-col gap-1.5 pt-1 items-end">
+        <div class="port-column port-column-right flex flex-col gap-1.5 pt-1">
           @for (port of rightPorts(); track port.id) {
             <button
               type="button"
               class="port-row port-right"
               (pointerdown)="onPortPointerDown($event, port)"
             >
-              <span class="truncate">{{ port.label }}</span>
+              <span class="port-label">{{ port.label }}</span>
               <span class="port-dot" [style.background]="theme().border"></span>
             </button>
           }
@@ -104,6 +104,7 @@ import {
   `,
   styles: `
     .node-shell {
+      min-width: 240px;
       border-width: 1.5px;
       background: var(--node-bg, #ffffff);
       z-index: 10;
@@ -118,6 +119,12 @@ import {
     }
     .node-body {
       background: var(--node-bg);
+    }
+    .port-column-left {
+      align-items: flex-start;
+    }
+    .port-column-right {
+      align-items: flex-end;
     }
     .port-row {
       display: flex;
@@ -134,6 +141,22 @@ import {
     .port-row:hover {
       color: var(--foreground);
     }
+    .port-left {
+      justify-content: flex-start;
+      text-align: left;
+      padding-left: 2px;
+    }
+    .port-right {
+      justify-content: flex-end;
+      text-align: right;
+      padding-right: 6px;
+    }
+    .port-label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+    }
     .port-dot {
       width: 8px;
       height: 8px;
@@ -142,8 +165,12 @@ import {
       box-shadow: 0 0 0 1px currentColor;
       flex-shrink: 0;
     }
-    .port-right {
-      justify-content: flex-end;
+    .attr-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+      flex: 1;
     }
     .attr-type {
       background: color-mix(in oklch, var(--muted) 80%, transparent);

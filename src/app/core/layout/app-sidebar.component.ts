@@ -1,14 +1,10 @@
 import { ChangeDetectionStrategy, Component, HostBinding, inject, input, output } from '@angular/core';
 import { RouterLink, RouterLinkActive } from '@angular/router';
 import {
-  LucideBuilding2,
-  LucideFolder,
-  LucideLayoutDashboard,
   LucideAnvil,
   LucideLogOut,
   LucideSparkles,
   LucideUser,
-  LucideUsers,
   LucideWorkflow,
   LucideX,
 } from '@lucide/angular';
@@ -23,7 +19,6 @@ import { HlmButtonImports } from '@app/shared/ui/button';
     @media (min-width: 1024px) {
       :host(.collapsed) .sidebar-label,
       :host(.collapsed) .sidebar-header-title,
-      :host(.collapsed) .sidebar-section-label,
       :host(.collapsed) .sidebar-footer-text {
         display: none;
       }
@@ -54,15 +49,11 @@ import { HlmButtonImports } from '@app/shared/ui/button';
   imports: [
     RouterLink,
     RouterLinkActive,
-    LucideBuilding2,
-    LucideFolder,
-    LucideLayoutDashboard,
     LucideAnvil,
     LucideSparkles,
     LucideWorkflow,
     LucideLogOut,
     LucideUser,
-    LucideUsers,
     LucideX,
     HlmButtonImports,
   ],
@@ -88,17 +79,6 @@ import { HlmButtonImports } from '@app/shared/ui/button';
       <nav class="space-y-1 p-3">
         @if (!authService.mustChangePassword()) {
           <a
-            routerLink="/"
-            routerLinkActive="bg-sidebar-accent text-sidebar-accent-foreground"
-            [routerLinkActiveOptions]="{ exact: true }"
-            class="sidebar-nav-link flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors min-h-[44px] text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-            [attr.title]="collapsed() ? 'Dashboard' : null"
-            (click)="navigate.emit()"
-          >
-            <svg lucideLayoutDashboard class="size-4 shrink-0"></svg>
-            <span class="sidebar-label truncate">Dashboard</span>
-          </a>
-          <a
             routerLink="/copilot"
             routerLinkActive="bg-sidebar-accent text-sidebar-accent-foreground"
             class="sidebar-nav-link flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors min-h-[44px] text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
@@ -120,55 +100,9 @@ import { HlmButtonImports } from '@app/shared/ui/button';
           </a>
         }
       </nav>
-
-      @if (
-        !authService.mustChangePassword() &&
-        (authService.hasRole('super_admin') ||
-          authService.hasRole('organization_admin'))
-      ) {
-        <nav class="mt-auto space-y-1 border-t border-sidebar-border p-3">
-          <p class="sidebar-section-label px-3 pb-1 text-xs font-medium uppercase tracking-wide text-sidebar-foreground/60">
-            Administration
-          </p>
-          @if (authService.hasRole('super_admin')) {
-            <a
-              routerLink="/organizations"
-              routerLinkActive="bg-sidebar-accent text-sidebar-accent-foreground"
-              class="sidebar-nav-link flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors min-h-[44px] text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-              [attr.title]="collapsed() ? 'Organisations' : null"
-              (click)="navigate.emit()"
-            >
-              <svg lucideBuilding2 class="size-4 shrink-0"></svg>
-              <span class="sidebar-label truncate">Organisations</span>
-            </a>
-          }
-          @if (authService.hasRole('super_admin') || authService.hasRole('organization_admin')) {
-            <a
-              routerLink="/users"
-              routerLinkActive="bg-sidebar-accent text-sidebar-accent-foreground"
-              class="sidebar-nav-link flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors min-h-[44px] text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-              [attr.title]="collapsed() ? 'Utilisateurs' : null"
-              (click)="navigate.emit()"
-            >
-              <svg lucideUsers class="size-4 shrink-0"></svg>
-              <span class="sidebar-label truncate">Utilisateurs</span>
-            </a>
-            <a
-              routerLink="/groups"
-              routerLinkActive="bg-sidebar-accent text-sidebar-accent-foreground"
-              class="sidebar-nav-link flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors min-h-[44px] text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-              [attr.title]="collapsed() ? 'Groupes' : null"
-              (click)="navigate.emit()"
-            >
-              <svg lucideFolder class="size-4 shrink-0"></svg>
-              <span class="sidebar-label truncate">Groupes</span>
-            </a>
-          }
-        </nav>
-      }
     </div>
 
-    <div class="border-t border-sidebar-border p-3">
+    <div class="mt-auto border-t border-sidebar-border p-3">
       <a
         routerLink="/my-profile"
         routerLinkActive="!text-sidebar-foreground"

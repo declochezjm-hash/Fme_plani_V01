@@ -40,6 +40,8 @@ export interface EtlPipelineEdge {
   id: string;
   source: string;
   target: string;
+  sourcePort?: string;
+  targetPort?: string;
 }
 
 export interface EtlPipelineJson {
