@@ -1,4 +1,5 @@
 @import '@angular/cdk/overlay-prebuilt.css';
+@import 'maplibre-gl/dist/maplibre-gl.css';
 
 @import 'tailwindcss';
 @import '@spartan-ng/brain/hlm-tailwind-preset.css';

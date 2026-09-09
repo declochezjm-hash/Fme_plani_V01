@@ -1,7 +1,7 @@
 # GisForge — Supabase local development
 # https://supabase.com/docs/guides/local-development/cli/config
 
-project_id = "gis-forge"
+project_id = "fme_plani_V01"
 
 [api]
 enabled = true
