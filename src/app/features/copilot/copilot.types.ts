@@ -19,12 +19,21 @@ export interface CopilotMessage {
   diagnosis?: CopilotDiagnosis;
 }
 
+export interface EtlPipelineGroup {
+  id: string;
+  label: string;
+  color: string;
+  position: { x: number; y: number };
+  size: { width: number; height: number };
+}
+
 export interface EtlPipelineNode {
   id: string;
   type: string;
   label: string;
   config: Record<string, unknown>;
   position: { x: number; y: number };
+  groupId?: string;
 }
 
 export interface EtlPipelineEdge {
@@ -37,6 +46,7 @@ export interface EtlPipelineJson {
   version: number;
   nodes: EtlPipelineNode[];
   edges: EtlPipelineEdge[];
+  groups?: EtlPipelineGroup[];
 }
 
 export interface CopilotPromptResult {

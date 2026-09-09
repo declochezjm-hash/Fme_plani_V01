@@ -800,6 +800,15 @@ export type Database = {
             Returns: string
           }
       clear_must_change_password: { Args: never; Returns: undefined }
+      complete_etl_execution: {
+        Args: {
+          error_message_param?: string
+          execution_id_param: string
+          metrics_param?: Json
+          status_param: string
+        }
+        Returns: undefined
+      }
       create_user: {
         Args: {
           p_display_name: string
@@ -846,10 +855,16 @@ export type Database = {
         | { Args: { table_name: string }; Returns: string }
       enablelongtransactions: { Args: never; Returns: string }
       equals: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
-      execute_etl_pipeline: {
-        Args: { project_id_param: string }
-        Returns: string
-      }
+      execute_etl_pipeline:
+        | { Args: { project_id_param: string }; Returns: string }
+        | {
+            Args: {
+              error_message_param?: string
+              metrics_param?: Json
+              project_id_param: string
+            }
+            Returns: string
+          }
       geometry: { Args: { "": string }; Returns: unknown }
       geometry_above: {
         Args: { geom1: unknown; geom2: unknown }
@@ -1570,6 +1585,10 @@ export type Database = {
       st_wrapx: {
         Args: { geom: unknown; move: number; wrap: number }
         Returns: unknown
+      }
+      start_etl_execution: {
+        Args: { project_id_param: string }
+        Returns: string
       }
       unlockrows: { Args: { "": string }; Returns: number }
       update_own_profile: {

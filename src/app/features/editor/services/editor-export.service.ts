@@ -107,7 +107,7 @@ export class EditorExportService {
     return `#!/usr/bin/env python3
 """Script ETL généré par GisForge — ${projectName}
 Exécution : python etl_pipeline.py --input data.geojson --output out.geojson
-Dépendances : geopandas, shapely, pyproj
+Dépendances : geopandas, shapely, pyproj, sqlalchemy
 """
 import argparse
 import json
@@ -116,21 +116,100 @@ from pathlib import Path
 PIPELINE = json.loads('''${nodesJson.replace(/'/g, "\\'")}''')
 
 
-def load_geojson(path: Path):
+def resolve_macro(value):
+    import os
+    if not isinstance(value, str):
+        return value
+    if value.startswith("$(") and value.endswith(")"):
+        key = value[2:-1]
+        return os.environ.get(key, value)
+    return value
+
+
+def build_postgis_url(cfg: dict) -> str:
+    pg = cfg.get("postgisConnection", {})
+    host = resolve_macro(pg.get("host", "localhost"))
+    port = pg.get("port", 5432)
+    database = resolve_macro(pg.get("database", "gis"))
+    username = resolve_macro(pg.get("username", "user"))
+    password = resolve_macro(pg.get("password", "pass"))
+    ssl = pg.get("sslMode", "prefer")
+    return f"postgresql+psycopg2://{username}:{password}@{host}:{port}/{database}?sslmode={ssl}"
+
+
+def postgis_geom_col(cfg: dict) -> str:
+    table_cfg = cfg.get("postgisTableCreation", {})
+    return table_cfg.get("spatialColumnName", "geom")
+
+
+def load_dataset(path: Path, cfg: dict):
     import geopandas as gpd
+    from sqlalchemy import create_engine
+
+    fmt = cfg.get("format", "geojson")
+    if fmt == "postgis":
+        schema = resolve_macro(cfg.get("schema", "public"))
+        table = resolve_macro(cfg.get("tableName", cfg.get("table", "features")))
+        engine = create_engine(cfg.get("connection") or build_postgis_url(cfg))
+        geom_col = postgis_geom_col(cfg)
+        return gpd.read_postgis(f'SELECT * FROM "{schema}"."{table}"', engine, geom_col=geom_col)
+    if fmt == "geopackage":
+        return gpd.read_file(path, layer=cfg.get("tableName", "features"))
+    if fmt == "shapefile":
+        return gpd.read_file(path)
     return gpd.read_file(path)
 
 
-def save_geojson(gdf, path: Path):
+def save_dataset(gdf, path: Path, cfg: dict):
+    import geopandas as gpd
+    from sqlalchemy import create_engine
+
+    fmt = cfg.get("format", "geojson")
+    if fmt == "postgis":
+        schema = resolve_macro(cfg.get("schema", "public"))
+        table = resolve_macro(cfg.get("tableName", cfg.get("table", "features")))
+        engine = create_engine(cfg.get("connection") or build_postgis_url(cfg))
+        mode = "replace" if cfg.get("tableHandling") == "truncate" else "append"
+        gdf.to_postgis(table, engine, schema=schema, if_exists=mode, index=False)
+        return
+    if fmt == "geopackage":
+        gdf.to_file(path, driver="GPKG", layer=cfg.get("tableName", "features"))
+        return
+    if fmt == "shapefile":
+        gdf.to_file(path, driver="ESRI Shapefile")
+        return
     gdf.to_file(path, driver="GeoJSON")
 
 
+def apply_tester(gdf, cfg: dict):
+    import pandas as pd
+
+    conditions = cfg.get("conditions", [])
+    mask = pd.Series([True] * len(gdf), index=gdf.index)
+    for condition in conditions:
+        attr = condition.get("attribute", "")
+        op = condition.get("operator", "=")
+        value = condition.get("value", "")
+        if op == "is_not_null":
+            mask &= gdf[attr].notna()
+        elif op == "like":
+            mask &= gdf[attr].astype(str).str.contains(str(value), case=False, na=False)
+        elif op == ">":
+            mask &= gdf[attr] > value
+        elif op == "<":
+            mask &= gdf[attr] < value
+        else:
+            mask &= gdf[attr] == value
+    return gdf[mask]
+
+
 def run_pipeline(input_path: Path, output_path: Path):
-    import geopandas as gpd
     from shapely.ops import transform
     import pyproj
 
-    gdf = load_geojson(input_path)
+    reader = next((n for n in PIPELINE["nodes"] if n["type"] == "reader"), None)
+    reader_cfg = reader.get("config", {}) if reader else {}
+    gdf = load_dataset(input_path, reader_cfg)
     print(f"Lecture : {len(gdf)} entités")
 
     for node in PIPELINE["nodes"]:
@@ -140,25 +219,37 @@ def run_pipeline(input_path: Path, output_path: Path):
         print(f"→ {label} ({ntype})")
 
         if ntype == "buffer":
-            gdf["geometry"] = gdf.geometry.buffer(float(cfg.get("distance_m", 10)))
+            distance = float(cfg.get("distance_m", cfg.get("distance", 10)))
+            gdf["geometry"] = gdf.geometry.buffer(distance)
+            if cfg.get("dissolve"):
+                gdf = gdf.dissolve(by=None)
         elif ntype == "reproject":
-            src = cfg.get("source_srid", 4326)
-            dst = cfg.get("target_srid", 2154)
+            src = cfg.get("source_srid", cfg.get("sourceSrid", 4326))
+            dst = cfg.get("target_srid", cfg.get("targetSrid", 2154))
             transformer = pyproj.Transformer.from_crs(f"EPSG:{src}", f"EPSG:{dst}", always_xy=True)
+            gdf = gdf.to_crs(epsg=int(dst))
             gdf["geometry"] = gdf.geometry.apply(lambda geom: transform(transformer.transform, geom))
-        elif ntype == "topology_validator":
-            gdf = gdf[gdf.geometry.is_valid | gdf.geometry.buffer(0).is_valid]
+        elif ntype in ("topology_validator", "tester"):
+            if ntype == "topology_validator" and cfg.get("heal", True):
+                gdf["geometry"] = gdf.geometry.buffer(0)
+            gdf = apply_tester(gdf, cfg)
         elif ntype == "writer":
-            pass
+            save_dataset(gdf, output_path, cfg)
+            print(f"Écriture : {output_path} ({len(gdf)} entités)")
+            return
 
     save_geojson(gdf, output_path)
     print(f"Écriture : {output_path} ({len(gdf)} entités)")
 
 
+def save_geojson(gdf, path: Path):
+    gdf.to_file(path, driver="GeoJSON")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pipeline ETL GisForge")
-    parser.add_argument("--input", required=True, help="Fichier source GeoJSON")
-    parser.add_argument("--output", required=True, help="Fichier de sortie GeoJSON")
+    parser.add_argument("--input", required=True, help="Fichier source")
+    parser.add_argument("--output", required=True, help="Fichier de sortie")
     args = parser.parse_args()
     run_pipeline(Path(args.input), Path(args.output))
 `;

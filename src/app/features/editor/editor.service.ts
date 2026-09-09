@@ -2,7 +2,13 @@ import { computed, inject, Injectable, signal } from '@angular/core';
 import { AuthService } from '@app/core/auth/auth.service';
 import type { Json } from '@app/core/supabase/database.types';
 import { SupabaseService } from '@app/core/supabase/supabase.service';
-import type { EtlPipelineJson, EtlPipelineNode } from '../copilot/copilot.types';
+import type { EtlPipelineGroup, EtlPipelineJson, EtlPipelineNode } from '../copilot/copilot.types';
+import {
+  getNodeAttributes,
+  GROUP_COLOR_PALETTE,
+  GROUP_MIN_SIZE,
+  type NodeAttribute,
+} from './services/editor-canvas.utils';
 import { CopilotService } from '../copilot/copilot.service';
 import { DEFAULT_DEMO_PIPELINE, NODE_CATALOG, type PipelineRunResult } from './services/etl.types';
 import { PipelineExecutionService } from './services/pipeline-execution.service';
@@ -15,6 +21,20 @@ const EMPTY_PIPELINE: EtlPipelineJson = {
   edges: [],
 };
 
+const EDITOR_DEMO_STORAGE_KEYS = [
+  'gisforge-demo-pipeline',
+  'gisforge-editor-pipeline-cache',
+  'gisforge-editor-canvas-state',
+] as const;
+
+const EDITOR_GROUPS_MIGRATION_KEY = 'gisforge-editor-groups-v2';
+
+export interface AddGroupOptions {
+  panX: number;
+  panY: number;
+  aroundNode?: EtlPipelineNode;
+}
+
 @Injectable({ providedIn: 'root' })
 export class EditorService {
   private readonly supabase = inject(SupabaseService).client;
@@ -23,10 +43,15 @@ export class EditorService {
   private readonly execution = inject(PipelineExecutionService);
   private readonly copilot = inject(CopilotService);
 
+  constructor() {
+    this.purgeCorruptedDemoStorage();
+  }
+
   private readonly _projects = signal<EtlProject[]>([]);
   private readonly _activeProjectId = signal<string | null>(null);
   private readonly _canvasPipeline = signal<EtlPipelineJson>(EMPTY_PIPELINE);
   private readonly _selectedNodeId = signal<string | null>(null);
+  private readonly _selectedEdgeId = signal<string | null>(null);
   private readonly _loading = signal(false);
   private readonly _saving = signal(false);
   private readonly _running = signal(false);
@@ -38,6 +63,7 @@ export class EditorService {
   readonly activeProjectId = this._activeProjectId.asReadonly();
   readonly canvasPipeline = this._canvasPipeline.asReadonly();
   readonly selectedNodeId = this._selectedNodeId.asReadonly();
+  readonly selectedEdgeId = this._selectedEdgeId.asReadonly();
   readonly loading = this._loading.asReadonly();
   readonly saving = this._saving.asReadonly();
   readonly running = this._running.asReadonly();
@@ -57,6 +83,11 @@ export class EditorService {
   });
 
   readonly pipeline = computed<EtlPipelineJson>(() => this._canvasPipeline());
+
+  readonly selectedNodeAttributes = computed<NodeAttribute[]>(() => {
+    const node = this.selectedNode();
+    return node ? getNodeAttributes(node) : [];
+  });
 
   readonly selectedNode = computed(() => {
     const id = this._selectedNodeId();
@@ -117,15 +148,81 @@ export class EditorService {
     if (!config?.nodes?.length) {
       return this.cloneDemoPipeline();
     }
-    return config;
+    return this.sanitizeGroups(config);
+  }
+
+  private purgeCorruptedDemoStorage(): void {
+    if (typeof localStorage === 'undefined') {
+      return;
+    }
+
+    try {
+      if (localStorage.getItem(EDITOR_GROUPS_MIGRATION_KEY)) {
+        return;
+      }
+
+      for (const key of EDITOR_DEMO_STORAGE_KEYS) {
+        localStorage.removeItem(key);
+      }
+
+      localStorage.setItem(EDITOR_GROUPS_MIGRATION_KEY, '1');
+    } catch {
+      // localStorage indisponible (SSR, mode privé, etc.)
+    }
+  }
+
+  private sanitizeGroups(pipeline: EtlPipelineJson): EtlPipelineJson {
+    const groups = (pipeline.groups ?? []).map((group, index) => ({
+      ...group,
+      position: {
+        x: group.position?.x ?? 100 + index * 80,
+        y: group.position?.y ?? 100 + index * 80,
+      },
+      size: {
+        width: Math.max(GROUP_MIN_SIZE, group.size?.width ?? 400),
+        height: Math.max(GROUP_MIN_SIZE, group.size?.height ?? 250),
+      },
+    }));
+
+    const seen = new Set<string>();
+    const dedupedGroups = groups.filter((group) => {
+      if (seen.has(group.id)) {
+        return false;
+      }
+      seen.add(group.id);
+      return true;
+    });
+
+    const validGroupIds = new Set(dedupedGroups.map((group) => group.id));
+
+    return {
+      ...pipeline,
+      groups: dedupedGroups,
+      nodes: pipeline.nodes.map((node) =>
+        node.groupId && !validGroupIds.has(node.groupId)
+          ? { ...node, groupId: undefined }
+          : node,
+      ),
+    };
   }
 
   private cloneDemoPipeline(): EtlPipelineJson {
-    return JSON.parse(JSON.stringify(DEFAULT_DEMO_PIPELINE)) as EtlPipelineJson;
+    const pipeline = JSON.parse(JSON.stringify(DEFAULT_DEMO_PIPELINE)) as EtlPipelineJson;
+    return this.sanitizeGroups(pipeline);
   }
 
   selectNode(nodeId: string | null): void {
     this._selectedNodeId.set(nodeId);
+    if (nodeId) {
+      this._selectedEdgeId.set(null);
+    }
+  }
+
+  selectEdge(edgeId: string | null): void {
+    this._selectedEdgeId.set(edgeId);
+    if (edgeId) {
+      this._selectedNodeId.set(null);
+    }
   }
 
   injectPipeline(pipeline: EtlPipelineJson): void {
@@ -296,6 +393,143 @@ export class EditorService {
     }));
   }
 
+  moveGroup(groupId: string, position: { x: number; y: number }): void {
+    const pipeline = this._canvasPipeline();
+    const group = pipeline.groups?.find((item) => item.id === groupId);
+    if (!group) {
+      return;
+    }
+
+    const dx = position.x - group.position.x;
+    const dy = position.y - group.position.y;
+
+    this._canvasPipeline.update((current) => ({
+      ...current,
+      groups: (current.groups ?? []).map((item) =>
+        item.id === groupId ? { ...item, position } : item,
+      ),
+      nodes: current.nodes.map((node) =>
+        node.groupId === groupId
+          ? { ...node, position: { x: node.position.x + dx, y: node.position.y + dy } }
+          : node,
+      ),
+    }));
+  }
+
+  resizeGroup(
+    groupId: string,
+    position: { x: number; y: number },
+    size: { width: number; height: number },
+  ): void {
+    this._canvasPipeline.update((current) => ({
+      ...current,
+      groups: (current.groups ?? []).map((group) =>
+        group.id === groupId
+          ? {
+              ...group,
+              position,
+              size: {
+                width: Math.max(GROUP_MIN_SIZE, size.width),
+                height: Math.max(GROUP_MIN_SIZE, size.height),
+              },
+            }
+          : group,
+      ),
+    }));
+  }
+
+  updateGroup(
+    groupId: string,
+    patch: Partial<Pick<EtlPipelineGroup, 'label' | 'color'>>,
+  ): void {
+    this._canvasPipeline.update((pipeline) => ({
+      ...pipeline,
+      groups: (pipeline.groups ?? []).map((group) =>
+        group.id === groupId ? { ...group, ...patch } : group,
+      ),
+    }));
+  }
+
+  deleteEdge(edgeId: string): void {
+    this._canvasPipeline.update((pipeline) => ({
+      ...pipeline,
+      edges: pipeline.edges.filter((edge) => edge.id !== edgeId),
+    }));
+    if (this._selectedEdgeId() === edgeId) {
+      this._selectedEdgeId.set(null);
+    }
+  }
+
+  deleteNode(nodeId: string): void {
+    this._canvasPipeline.update((pipeline) => ({
+      ...pipeline,
+      nodes: pipeline.nodes.filter((node) => node.id !== nodeId),
+      edges: pipeline.edges.filter(
+        (edge) => edge.source !== nodeId && edge.target !== nodeId,
+      ),
+    }));
+    if (this._selectedNodeId() === nodeId) {
+      this._selectedNodeId.set(null);
+    }
+  }
+
+  detachNodeEdges(nodeId: string): void {
+    this._canvasPipeline.update((pipeline) => ({
+      ...pipeline,
+      edges: pipeline.edges.filter(
+        (edge) => edge.source !== nodeId && edge.target !== nodeId,
+      ),
+    }));
+  }
+
+  deleteGroup(groupId: string): void {
+    this._canvasPipeline.update((pipeline) => ({
+      ...pipeline,
+      groups: (pipeline.groups ?? []).filter((group) => group.id !== groupId),
+      nodes: pipeline.nodes.map((node) =>
+        node.groupId === groupId ? { ...node, groupId: undefined } : node,
+      ),
+    }));
+  }
+
+  deleteGroupWithNodes(groupId: string): void {
+    const pipeline = this._canvasPipeline();
+    const nodeIds = new Set(
+      pipeline.nodes.filter((node) => node.groupId === groupId).map((node) => node.id),
+    );
+
+    this._canvasPipeline.update((current) => ({
+      ...current,
+      groups: (current.groups ?? []).filter((item) => item.id !== groupId),
+      nodes: current.nodes.filter((node) => !nodeIds.has(node.id)),
+      edges: current.edges.filter(
+        (edge) => !nodeIds.has(edge.source) && !nodeIds.has(edge.target),
+      ),
+    }));
+
+    if (this._selectedNodeId() && nodeIds.has(this._selectedNodeId()!)) {
+      this._selectedNodeId.set(null);
+    }
+  }
+
+  reconnectEdge(edgeId: string, targetNodeId: string): void {
+    this._canvasPipeline.update((pipeline) => ({
+      ...pipeline,
+      edges: pipeline.edges.map((edge) =>
+        edge.id === edgeId ? { ...edge, target: targetNodeId } : edge,
+      ),
+    }));
+  }
+
+  reconnectEdgeSource(edgeId: string, sourceNodeId: string): void {
+    this._canvasPipeline.update((pipeline) => ({
+      ...pipeline,
+      edges: pipeline.edges.map((edge) =>
+        edge.id === edgeId ? { ...edge, source: sourceNodeId } : edge,
+      ),
+    }));
+  }
+
   addNode(catalogIndex: number): void {
     const item = NODE_CATALOG[catalogIndex];
     if (!item) {
@@ -316,6 +550,34 @@ export class EditorService {
       nodes: [...pipeline.nodes, node],
     }));
     this._selectedNodeId.set(id);
+  }
+
+  addGroup(label = 'Nouvelle étape', options?: AddGroupOptions): string {
+    const index = (this._canvasPipeline().groups?.length ?? 0) % GROUP_COLOR_PALETTE.length;
+    const position = options?.aroundNode
+      ? {
+          x: Math.max(0, options.aroundNode.position.x - 20),
+          y: Math.max(0, options.aroundNode.position.y - 40),
+        }
+      : {
+          x: (options?.panX ?? 0) + 100,
+          y: (options?.panY ?? 0) + 100,
+        };
+
+    const group: EtlPipelineGroup = {
+      id: `group-${crypto.randomUUID().slice(0, 8)}`,
+      label,
+      color: GROUP_COLOR_PALETTE[index],
+      position,
+      size: { width: 400, height: 250 },
+    };
+
+    this._canvasPipeline.update((pipeline) => ({
+      ...pipeline,
+      groups: [...(pipeline.groups ?? []), group],
+    }));
+
+    return group.id;
   }
 
   connectNodes(sourceId: string, targetId: string): void {
@@ -342,6 +604,14 @@ export class EditorService {
         node.id === nodeId ? { ...node, config } : node,
       ),
     }));
+  }
+
+  patchNodeConfig(nodeId: string, patch: Record<string, unknown>): void {
+    const node = this._canvasPipeline().nodes.find((item) => item.id === nodeId);
+    if (!node) {
+      return;
+    }
+    this.updateNodeConfig(nodeId, { ...node.config, ...patch });
   }
 
   async importFileToNode(nodeId: string, file: File): Promise<void> {

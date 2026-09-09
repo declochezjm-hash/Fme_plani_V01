@@ -1,16 +1,21 @@
-import { ChangeDetectionStrategy, Component, inject, OnInit } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import {
+  LucideChevronDown,
+  LucideChevronUp,
   LucideDownload,
   LucideFileCode,
+  LucideMoon,
   LucidePlay,
   LucidePlus,
   LucideSave,
   LucideSparkles,
+  LucideSun,
   LucideWorkflow,
 } from '@lucide/angular';
 import { toast } from 'ngx-sonner';
 import { UxModeService } from '@app/core/ux-mode/ux-mode.service';
+import { EditorThemeService } from './services/editor-theme.service';
 import { CopilotChatComponent } from '../copilot/components/copilot-chat/copilot-chat.component';
 import type { CopilotMessage, EtlPipelineJson } from '../copilot/copilot.types';
 import { HlmButtonImports } from '@app/shared/ui/button';
@@ -35,6 +40,10 @@ import { EditorService } from './editor.service';
     LucideSparkles,
     LucideDownload,
     LucideFileCode,
+    LucideMoon,
+    LucideSun,
+    LucideChevronDown,
+    LucideChevronUp,
     HlmButtonImports,
     HlmInputImports,
     HlmLabelImports,
@@ -67,6 +76,15 @@ import { EditorService } from './editor.service';
         </div>
         <div class="flex flex-wrap gap-2">
           @if (uxMode.mode() === 'expert') {
+            <button hlmBtn variant="outline" type="button" (click)="editorTheme.toggle()">
+              @if (editorTheme.dark()) {
+                <svg lucideSun class="size-4"></svg>
+                Clair
+              } @else {
+                <svg lucideMoon class="size-4"></svg>
+                Sombre
+              }
+            </button>
             <button hlmBtn variant="outline" type="button" (click)="createProject()">
               <svg lucidePlus class="size-4"></svg>
               Nouveau projet
@@ -234,32 +252,49 @@ import { EditorService } from './editor.service';
             }
           </aside>
 
-          <div class="flex flex-col gap-3 min-h-[32rem]">
+          <div class="flex flex-col gap-3 min-h-[36rem]">
             <app-editor-canvas
-              class="flex-1"
+              class="flex-1 min-h-[28rem]"
               [pipeline]="editorService.canvasPipeline()"
               [selectedNodeId]="editorService.selectedNodeId()"
-              (selectNode)="editorService.selectNode($event)"
-              (moveNode)="editorService.moveNode($event.nodeId, $event.position)"
-              (connectNodes)="editorService.connectNodes($event.sourceId, $event.targetId)"
+              [selectedEdgeId]="editorService.selectedEdgeId()"
+              [dark]="editorTheme.dark()"
               (explainNode)="onExplainNode($event)"
+              (openInspector)="onOpenInspector($event)"
             />
 
-            <div class="rounded-lg border bg-card p-3 max-h-48 overflow-auto">
-              <p class="text-xs font-medium mb-2">Console pipeline (JSON)</p>
-              <pre class="text-[10px] font-mono whitespace-pre-wrap">{{ pipelineJson() }}</pre>
-              @if (editorService.lastRunResult()?.logs?.length) {
-                <p class="text-xs font-medium mt-3 mb-1">Logs d'exécution</p>
-                <pre class="text-[10px] text-muted-foreground whitespace-pre-wrap">{{ executionLogs() }}</pre>
+            <div class="rounded-lg border bg-card overflow-hidden">
+              <button
+                type="button"
+                class="flex w-full items-center justify-between px-3 py-2 text-xs font-medium hover:bg-muted/40"
+                (click)="consoleExpanded.set(!consoleExpanded())"
+              >
+                <span>Console pipeline</span>
+                @if (consoleExpanded()) {
+                  <svg lucideChevronDown class="size-4"></svg>
+                } @else {
+                  <svg lucideChevronUp class="size-4"></svg>
+                }
+              </button>
+              @if (consoleExpanded()) {
+                <div class="border-t p-3 h-36 overflow-auto">
+                  <pre class="text-[10px] font-mono whitespace-pre-wrap">{{ pipelineJson() }}</pre>
+                  @if (editorService.lastRunResult()?.logs?.length) {
+                    <p class="text-xs font-medium mt-3 mb-1">Logs d'exécution</p>
+                    <pre class="text-[10px] text-muted-foreground whitespace-pre-wrap">{{ executionLogs() }}</pre>
+                  }
+                </div>
               }
             </div>
           </div>
 
-          <aside class="rounded-lg border bg-card p-3 overflow-y-auto min-h-[32rem] max-h-[32rem]">
+          <aside class="rounded-lg border bg-card p-3 overflow-y-auto min-h-[36rem] max-h-[36rem]">
             <app-editor-node-panel
               [node]="editorService.selectedNode()"
               [preview]="editorService.selectedNodePreview()"
+              [attributes]="editorService.selectedNodeAttributes()"
               [assistantReply]="editorService.assistantReply()"
+              [focusParamsToken]="inspectorFocusToken()"
               [srid]="editorService.activeProject()?.default_srid ?? 4326"
               (configChange)="editorService.updateNodeConfig($event.nodeId, $event.config)"
               (fileImport)="onFileImport($event.nodeId, $event.file)"
@@ -274,7 +309,11 @@ import { EditorService } from './editor.service';
 export class EditorPage implements OnInit {
   readonly editorService = inject(EditorService);
   readonly uxMode = inject(UxModeService);
+  readonly editorTheme = inject(EditorThemeService);
   private readonly exportService = inject(EditorExportService);
+
+  readonly consoleExpanded = signal(false);
+  readonly inspectorFocusToken = signal(0);
 
   readonly exportFormats: Array<{ id: DataExportFormat; label: string }> = [
     { id: 'geojson', label: 'GeoJSON' },
@@ -417,6 +456,10 @@ export class EditorPage implements OnInit {
   async onExplainNode(nodeId: string): Promise<void> {
     this.editorService.selectNode(nodeId);
     await this.explainSelectedNode();
+  }
+
+  onOpenInspector(_nodeId: string): void {
+    this.inspectorFocusToken.update((value) => value + 1);
   }
 
   private async explainSelectedNode(): Promise<void> {
