@@ -135,6 +135,7 @@ import { EditorService } from './editor.service';
             (selectNode)="editorService.selectNode($event)"
             (moveNode)="editorService.moveNode($event.nodeId, $event.position)"
             (connectNodes)="editorService.connectNodes($event.sourceId, $event.targetId)"
+            (explainNode)="onExplainNode($event)"
           />
 
           <aside class="rounded-lg border bg-card p-3 overflow-y-auto min-h-[32rem] max-h-[32rem]">
@@ -204,8 +205,18 @@ export class EditorPage implements OnInit {
   }
 
   async onAskAssistant(): Promise<void> {
+    await this.explainSelectedNode();
+  }
+
+  async onExplainNode(nodeId: string): Promise<void> {
+    this.editorService.selectNode(nodeId);
+    await this.explainSelectedNode();
+  }
+
+  private async explainSelectedNode(): Promise<void> {
     try {
       await this.editorService.askAssistant();
+      toast.success('Explication du nœud disponible dans le panneau latéral.');
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Erreur assistant.';
       toast.error(message);

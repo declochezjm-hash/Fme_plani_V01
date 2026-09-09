@@ -52,8 +52,10 @@ export async function readIfc(context: ReaderContext): Promise<EtlDataset> {
   const types = [
     WebIFC.IFCWALL,
     WebIFC.IFCSLAB,
-    WebIFC.IFCPIPESEGMENT as number,
+    WebIFC.IFCPIPESEGMENT,
     WebIFC.IFCBUILDINGELEMENTPROXY,
+    WebIFC.IFCBUILDINGELEMENT,
+    WebIFC.IFCPIPEFITTING,
   ];
 
   ifcApi.StreamAllMeshesWithTypes(modelId, types, (mesh) => {

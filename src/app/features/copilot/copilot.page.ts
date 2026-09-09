@@ -35,7 +35,7 @@ import { CopilotService } from './copilot.service';
             Copilot ETL
           </h1>
           <p class="text-muted-foreground text-sm mt-1">
-            Décrivez votre flux en langage naturel — mode guidé ou expert.
+            Décrivez votre flux en langage naturel — propulsé par Cursor Composer 2.5.
           </p>
         </div>
         <div class="flex flex-wrap items-center gap-2">

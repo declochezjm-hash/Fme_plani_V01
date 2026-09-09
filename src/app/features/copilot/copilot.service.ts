@@ -122,7 +122,7 @@ export class CopilotService {
     const llmUsed = !!llmPipeline;
 
     if (mode === 'novice') {
-      const prefix = llmUsed ? '[Ollama] ' : '';
+      const prefix = llmUsed ? '[Cursor Composer 2.5] ' : '';
       return {
         reply: `${prefix}${plainFrenchSummary}`,
         plainFrenchSummary,
@@ -131,7 +131,7 @@ export class CopilotService {
       };
     }
 
-    const prefix = llmUsed ? 'Pipeline généré via Ollama' : 'Pipeline généré localement';
+    const prefix = llmUsed ? 'Pipeline généré via Cursor Composer 2.5' : 'Pipeline généré localement';
     return {
       reply: `${prefix} (${pipeline.nodes.length} nœud${pipeline.nodes.length > 1 ? 's' : ''}).\n\n\`\`\`json_pipeline\n${JSON.stringify(pipeline, null, 2)}\n\`\`\``,
       plainFrenchSummary,

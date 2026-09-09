@@ -145,7 +145,7 @@ export class EditorService {
         ...node,
         id: newId,
         position: {
-          x: 80 + index * 220,
+          x: node.position?.x ?? 80 + index * 220,
           y: node.position?.y ?? 120,
         },
       };

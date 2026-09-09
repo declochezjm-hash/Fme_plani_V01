@@ -8,17 +8,28 @@ import {
   Injector,
   input,
   OnDestroy,
+  signal,
   viewChild,
 } from '@angular/core';
+import { HlmButtonImports } from '@app/shared/ui/button';
 import type { Feature, FeatureCollection, Geometry } from 'geojson';
 import * as maplibregl from 'maplibre-gl';
+
+type MapViewMode = '2d' | '3d' | 'auto';
 
 @Component({
   selector: 'app-editor-map-preview',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [HlmButtonImports],
   styles: `
     :host {
       display: block;
+      width: 100%;
+      height: 100%;
+      min-height: 400px;
+    }
+    .map-shell {
+      position: relative;
       width: 100%;
       height: 100%;
       min-height: 400px;
@@ -29,9 +40,56 @@ import * as maplibregl from 'maplibre-gl';
       height: 100%;
       min-height: 400px;
     }
+    .view-toggle {
+      position: absolute;
+      top: 0.5rem;
+      left: 0.5rem;
+      z-index: 2;
+      display: inline-flex;
+      gap: 0.25rem;
+      padding: 0.25rem;
+      border-radius: 0.375rem;
+      border: 1px solid var(--border);
+      background: color-mix(in oklch, var(--background) 92%, transparent);
+      backdrop-filter: blur(4px);
+    }
   `,
   template: `
-    <div #mapContainer class="map-container"></div>
+    <div class="map-shell">
+      <div class="view-toggle">
+        <button
+          hlmBtn
+          size="sm"
+          type="button"
+          [variant]="viewMode() === '2d' ? 'default' : 'ghost'"
+          class="h-7 px-2 text-xs"
+          (click)="setViewMode('2d')"
+        >
+          2D
+        </button>
+        <button
+          hlmBtn
+          size="sm"
+          type="button"
+          [variant]="viewMode() === '3d' ? 'default' : 'ghost'"
+          class="h-7 px-2 text-xs"
+          (click)="setViewMode('3d')"
+        >
+          3D
+        </button>
+        <button
+          hlmBtn
+          size="sm"
+          type="button"
+          [variant]="viewMode() === 'auto' ? 'default' : 'ghost'"
+          class="h-7 px-2 text-xs"
+          (click)="setViewMode('auto')"
+        >
+          Auto
+        </button>
+      </div>
+      <div #mapContainer class="map-container"></div>
+    </div>
   `,
 })
 export class EditorMapPreviewComponent implements OnDestroy {
@@ -43,6 +101,9 @@ export class EditorMapPreviewComponent implements OnDestroy {
   private readonly mapContainer = viewChild<ElementRef<HTMLDivElement>>('mapContainer');
   private map: maplibregl.Map | null = null;
   private mapReady = false;
+  private lastCollection: FeatureCollection | null = null;
+
+  readonly viewMode = signal<MapViewMode>('auto');
 
   constructor() {
     afterNextRender(
@@ -54,8 +115,16 @@ export class EditorMapPreviewComponent implements OnDestroy {
 
     effect(() => {
       const data = this.collection();
+      this.lastCollection = data;
       if (this.mapReady) {
         this.updateData(data);
+      }
+    });
+
+    effect(() => {
+      this.viewMode();
+      if (this.mapReady) {
+        this.updateData(this.lastCollection);
       }
     });
   }
@@ -64,6 +133,10 @@ export class EditorMapPreviewComponent implements OnDestroy {
     this.map?.remove();
     this.map = null;
     this.mapReady = false;
+  }
+
+  setViewMode(mode: MapViewMode): void {
+    this.viewMode.set(mode);
   }
 
   private initMap(): void {
@@ -92,7 +165,7 @@ export class EditorMapPreviewComponent implements OnDestroy {
       bearing: 0,
     });
 
-    this.map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+    this.map.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'top-right');
 
     this.map.once('load', () => {
       this.mapReady = true;
@@ -109,6 +182,17 @@ export class EditorMapPreviewComponent implements OnDestroy {
         feature.properties?.['_has_z'] === true ||
         typeof feature.properties?.['_extrusion_height'] === 'number',
     );
+  }
+
+  private shouldRender3d(data: FeatureCollection): boolean {
+    const mode = this.viewMode();
+    if (mode === '2d') {
+      return false;
+    }
+    if (mode === '3d') {
+      return true;
+    }
+    return this.has3dData(data);
   }
 
   private updateData(data: FeatureCollection | null): void {
@@ -142,7 +226,7 @@ export class EditorMapPreviewComponent implements OnDestroy {
       features: data.features.map((feature) => this.ensureExtrusionProperties(feature)),
     };
 
-    const is3d = this.has3dData(enriched);
+    const is3d = this.shouldRender3d(enriched);
     this.map.setPitch(is3d ? 55 : 0);
 
     this.map.addSource(sourceId, { type: 'geojson', data: enriched });

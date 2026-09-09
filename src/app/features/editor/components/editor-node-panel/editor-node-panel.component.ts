@@ -22,7 +22,7 @@ import { EditorMapPreviewComponent } from '../editor-map-preview/editor-map-prev
           </div>
           <button hlmBtn variant="outline" size="sm" type="button" (click)="askAssistant.emit()">
             <svg lucideBot class="size-4"></svg>
-            Assistant
+            Expliquer ce nœud
           </button>
         </div>
 

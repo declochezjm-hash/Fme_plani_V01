@@ -6,10 +6,18 @@ import {
   output,
   signal,
 } from '@angular/core';
+import { LucideMessageCircle } from '@lucide/angular';
+import { HlmButtonImports } from '@app/shared/ui/button';
 import type { EtlPipelineEdge, EtlPipelineJson, EtlPipelineNode } from '../../../copilot/copilot.types';
 
 const NODE_WIDTH = 168;
 const NODE_HEIGHT = 72;
+
+interface ContextMenuState {
+  nodeId: string;
+  x: number;
+  y: number;
+}
 
 @Component({
   selector: 'app-editor-canvas',
@@ -18,6 +26,7 @@ const NODE_HEIGHT = 72;
     class: 'block w-full',
     style: 'min-height: 32rem; height: 32rem;',
   },
+  imports: [LucideMessageCircle, HlmButtonImports],
   styles: `
     .canvas-root {
       touch-action: none;
@@ -53,6 +62,9 @@ const NODE_HEIGHT = 72;
     .edge-layer {
       z-index: 0;
     }
+    .context-menu {
+      z-index: 20;
+    }
   `,
   template: `
     <div
@@ -60,6 +72,8 @@ const NODE_HEIGHT = 72;
       (pointermove)="onPointerMove($event)"
       (pointerup)="onPointerUp()"
       (pointerleave)="onPointerUp()"
+      (click)="closeContextMenu()"
+      (contextmenu)="$event.preventDefault()"
     >
       <svg class="edge-layer absolute inset-0 h-full w-full pointer-events-none">
         @for (edge of pipeline().edges; track edge.id) {
@@ -91,6 +105,7 @@ const NODE_HEIGHT = 72;
           [style.top.px]="node.position.y"
           (pointerdown)="onNodePointerDown($event, node)"
           (click)="selectNode.emit(node.id)"
+          (contextmenu)="onNodeContextMenu($event, node)"
         >
           <button
             type="button"
@@ -111,6 +126,27 @@ const NODE_HEIGHT = 72;
         </div>
       }
 
+      @if (contextMenu(); as menu) {
+        <div
+          class="context-menu absolute min-w-[11rem] rounded-md border bg-popover p-1 shadow-md"
+          [style.left.px]="menu.x"
+          [style.top.px]="menu.y"
+          (click)="$event.stopPropagation()"
+        >
+          <button
+            hlmBtn
+            variant="ghost"
+            size="sm"
+            type="button"
+            class="w-full justify-start text-xs"
+            (click)="onExplainNode(menu.nodeId)"
+          >
+            <svg lucideMessageCircle class="size-3.5"></svg>
+            Expliquer ce nœud
+          </button>
+        </div>
+      }
+
       @if (connectingFromId()) {
         <p class="absolute top-2 left-2 z-10 text-[10px] bg-primary text-primary-foreground px-2 py-1 rounded-md">
           Cliquez sur une entrée pour connecter…
@@ -126,10 +162,12 @@ export class EditorCanvasComponent {
   readonly selectNode = output<string>();
   readonly moveNode = output<{ nodeId: string; position: { x: number; y: number } }>();
   readonly connectNodes = output<{ sourceId: string; targetId: string }>();
+  readonly explainNode = output<string>();
 
   private readonly draggingNodeId = signal<string | null>(null);
   private readonly dragOffset = signal({ x: 0, y: 0 });
   readonly connectingFromId = signal<string | null>(null);
+  readonly contextMenu = signal<ContextMenuState | null>(null);
 
   readonly nodeById = computed(() => {
     const map = new Map<string, EtlPipelineNode>();
@@ -155,6 +193,30 @@ export class EditorCanvasComponent {
     return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
   }
 
+  onNodeContextMenu(event: MouseEvent, node: EtlPipelineNode): void {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const canvas = (event.currentTarget as HTMLElement).closest('.canvas-root') as HTMLElement;
+    const rect = canvas.getBoundingClientRect();
+
+    this.contextMenu.set({
+      nodeId: node.id,
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    });
+    this.selectNode.emit(node.id);
+  }
+
+  closeContextMenu(): void {
+    this.contextMenu.set(null);
+  }
+
+  onExplainNode(nodeId: string): void {
+    this.closeContextMenu();
+    this.explainNode.emit(nodeId);
+  }
+
   onNodePointerDown(event: PointerEvent, node: EtlPipelineNode): void {
     if ((event.target as HTMLElement).closest('.port')) {
       return;
@@ -162,6 +224,7 @@ export class EditorCanvasComponent {
 
     event.preventDefault();
     event.stopPropagation();
+    this.closeContextMenu();
 
     const canvas = (event.currentTarget as HTMLElement).closest('.canvas-root') as HTMLElement;
     const canvasRect = canvas.getBoundingClientRect();

@@ -7,30 +7,39 @@ export interface LlmChatMessage {
   content: string;
 }
 
+interface CursorBridgeResponse {
+  content?: string;
+  error?: string;
+  model?: string;
+  provider?: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class CopilotLlmService {
-  private readonly ollamaUrl = environment.ollamaUrl ?? 'http://localhost:11434';
-  private readonly model = environment.ollamaModel ?? 'llama3.2';
+  private readonly bridgeUrl = environment.copilotBridgeUrl ?? '/api/copilot';
+  private readonly model = environment.cursorModel ?? 'composer-2.5';
 
   async complete(messages: LlmChatMessage[]): Promise<string | null> {
     try {
-      const response = await fetch(`${this.ollamaUrl}/api/chat`, {
+      const response = await fetch(`${this.bridgeUrl}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: this.model,
-          stream: false,
           messages,
+          model: this.model,
         }),
       });
 
+      const payload = (await response.json()) as CursorBridgeResponse;
+
       if (!response.ok) {
+        console.error('[CopilotLlmService]', payload.error ?? response.statusText);
         return null;
       }
 
-      const payload = (await response.json()) as { message?: { content?: string } };
-      return payload.message?.content?.trim() ?? null;
-    } catch {
+      return payload.content?.trim() ?? null;
+    } catch (error) {
+      console.error('[CopilotLlmService] Pont Cursor indisponible. Lancez `npm run copilot:bridge`.', error);
       return null;
     }
   }
