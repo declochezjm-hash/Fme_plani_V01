@@ -66,6 +66,21 @@ export class EditorService {
     return this._canvasPipeline().nodes.find((node) => node.id === id) ?? null;
   });
 
+  readonly workspacePreview = computed(() => {
+    const result = this._lastRunResult();
+    if (result?.output?.collection) {
+      return result.output.collection;
+    }
+
+    const reader = this._canvasPipeline().nodes.find((node) => node.type === 'reader');
+    const inline = reader?.config['inline'];
+    if (inline && typeof inline === 'object' && (inline as { type?: string }).type === 'FeatureCollection') {
+      return inline as import('geojson').FeatureCollection;
+    }
+
+    return null;
+  });
+
   readonly selectedNodePreview = computed(() => {
     const nodeId = this._selectedNodeId();
     const result = this._lastRunResult();
@@ -400,6 +415,13 @@ export class EditorService {
       const message = error instanceof Error ? error.message : 'Erreur ETL';
       this._lastError.set(message);
       this.execution.fail(message);
+      const node = this.selectedNode();
+      void this.copilot.diagnoseExecutionError(message, {
+        nodeLabel: node?.label,
+        nodeType: node?.type,
+        nodeConfig: node?.config,
+        pipelineSummary: `${this._canvasPipeline().nodes.length} nœuds`,
+      });
       throw error;
     } finally {
       this._running.set(false);
@@ -409,20 +431,68 @@ export class EditorService {
   async execute(projectId: string): Promise<{ executionId: string; result: PipelineRunResult }> {
     await this.saveCanvasPipeline();
 
-    const result = await this.runPipelineLocally();
+    try {
+      const result = await this.runPipelineLocally();
 
-    const { data, error } = await this.supabase.rpc('execute_etl_pipeline', {
-      project_id_param: projectId,
-    });
+      const { data, error } = await this.supabase.rpc('execute_etl_pipeline', {
+        project_id_param: projectId,
+        metrics_param: {
+          rows_read: result.metrics.rowsRead,
+          rows_written: result.metrics.rowsWritten,
+          duration_ms: result.metrics.durationMs,
+          node_results: result.metrics.nodeResults,
+          logs: result.logs,
+        } as unknown as Json,
+        error_message_param: undefined,
+      });
 
-    if (error) {
+      if (error) {
+        throw error;
+      }
+
+      if (!data) {
+        throw new Error('Exécution lancée mais identifiant introuvable.');
+      }
+
+      return { executionId: data as string, result };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Erreur ETL';
+
+      await this.supabase.rpc('execute_etl_pipeline', {
+        project_id_param: projectId,
+        metrics_param: null,
+        error_message_param: message,
+      });
+
       throw error;
     }
+  }
 
-    if (!data) {
-      throw new Error('Exécution lancée mais identifiant introuvable.');
+  applyDiagnosisFix(actionType: string): void {
+    if (actionType === 'fix_srid') {
+      const reproject = this._canvasPipeline().nodes.find((node) => node.type === 'reproject');
+      if (reproject) {
+        this.updateNodeConfig(reproject.id, {
+          ...reproject.config,
+          source_srid: 4326,
+          target_srid: 2154,
+        });
+        return;
+      }
+      const catalogIndex = NODE_CATALOG.findIndex((item) => item.type === 'reproject');
+      if (catalogIndex >= 0) {
+        this.addNode(catalogIndex);
+      }
     }
+  }
 
-    return { executionId: data as string, result };
+  async runPipelineFromChat(pipeline: EtlPipelineJson): Promise<PipelineRunResult> {
+    this.injectPipeline(pipeline);
+    let project = this.activeProject();
+    if (!project) {
+      project = await this.create({ name: `Projet ${new Date().toLocaleDateString('fr-FR')}` });
+    }
+    const { result } = await this.execute(project.id);
+    return result;
   }
 }

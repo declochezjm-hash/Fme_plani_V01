@@ -2,6 +2,7 @@ import { computed, inject, Injectable, signal } from '@angular/core';
 import { SupabaseService } from '@app/core/supabase/supabase.service';
 import { CopilotLlmService } from './copilot-llm.service';
 import type {
+  CopilotDiagnosis,
   CopilotExplainContext,
   CopilotMessage,
   CopilotMode,
@@ -97,6 +98,88 @@ export class CopilotService {
 
   parsePipelineFromText(text: string): EtlPipelineJson | null {
     return this.llm.extractPipelineJson(text) ?? null;
+  }
+
+  async diagnoseExecutionError(
+    errorMessage: string,
+    context?: CopilotExplainContext,
+  ): Promise<CopilotDiagnosis> {
+    const llmReply = await this.llm.explain(
+      [
+        `Erreur d'exécution : ${errorMessage}`,
+        context?.nodeLabel ? `Nœud : ${context.nodeLabel} (${context.nodeType})` : '',
+        context?.nodeConfig ? `Configuration : ${JSON.stringify(context.nodeConfig)}` : '',
+        context?.pipelineSummary ?? '',
+        'Réponds en français simple pour un débutant SIG. Donne une suggestion corrective concrète.',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
+
+    const fallback = this.buildErrorDiagnosis(errorMessage, context);
+    const suggestion = llmReply ?? fallback.suggestion;
+
+    const diagnosis: CopilotDiagnosis = {
+      summary: `L'exécution a échoué : ${errorMessage}`,
+      suggestion,
+      actionLabel: fallback.actionLabel,
+      actionType: fallback.actionType,
+    };
+
+    const assistantMessage: CopilotMessage = {
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      content: `${diagnosis.summary}\n\n${diagnosis.suggestion}`,
+      timestamp: new Date().toISOString(),
+      diagnosis,
+    };
+
+    this._messages.update((messages) => [...messages, assistantMessage]);
+    return diagnosis;
+  }
+
+  private buildErrorDiagnosis(
+    errorMessage: string,
+    context?: CopilotExplainContext,
+  ): CopilotDiagnosis {
+    const lower = errorMessage.toLowerCase();
+
+    if (lower.includes('srid') || lower.includes('projection') || lower.includes('epsg')) {
+      return {
+        summary: `Erreur de projection : ${errorMessage}`,
+        suggestion:
+          'Le fichier ne possède probablement pas le bon système de coordonnées. Vérifiez le nœud de reprojection et alignez source_srid / target_srid.',
+        actionLabel: 'Corriger la projection (EPSG:4326 → 2154)',
+        actionType: 'fix_srid',
+      };
+    }
+
+    if (lower.includes('entrée manquante') || lower.includes('connexion')) {
+      return {
+        summary: `Connexion manquante : ${errorMessage}`,
+        suggestion:
+          'Un nœud n\'est pas relié correctement. Reliez la sortie du lecteur vers la première transformation.',
+        actionLabel: 'Vérifier les connexions',
+        actionType: 'reconnect_nodes',
+      };
+    }
+
+    if (lower.includes('format') || lower.includes('fichier')) {
+      return {
+        summary: `Problème de fichier : ${errorMessage}`,
+        suggestion:
+          'Le format du fichier importé n\'est pas reconnu ou est corrompu. Réimportez un GeoJSON, CSV, GPKG ou IFC valide.',
+        actionLabel: 'Vérifier le format source',
+        actionType: 'check_format',
+      };
+    }
+
+    return {
+      summary: `Erreur : ${errorMessage}`,
+      suggestion: context?.nodeLabel
+        ? `Vérifiez le nœud « ${context.nodeLabel} » et ses paramètres dans le panneau de configuration.`
+        : 'Vérifiez les connexions entre les nœuds et les paramètres de chaque étape.',
+    };
   }
 
   async executePipeline(projectId: string): Promise<string> {

@@ -2,6 +2,13 @@ export type CopilotMode = 'novice' | 'expert';
 
 export type CopilotMessageRole = 'user' | 'assistant' | 'system';
 
+export interface CopilotDiagnosis {
+  summary: string;
+  suggestion: string;
+  actionLabel?: string;
+  actionType?: 'fix_srid' | 'reconnect_nodes' | 'check_format';
+}
+
 export interface CopilotMessage {
   id: string;
   role: CopilotMessageRole;
@@ -9,6 +16,7 @@ export interface CopilotMessage {
   timestamp: string;
   pipeline?: EtlPipelineJson;
   plainFrenchSummary?: string;
+  diagnosis?: CopilotDiagnosis;
 }
 
 export interface EtlPipelineNode {

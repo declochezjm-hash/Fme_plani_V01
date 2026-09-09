@@ -58,8 +58,10 @@
             "scripts": [],
             "allowedCommonJsDependencies": [
               "@turf/jsts",
+              "jszip",
               "papaparse",
               "rbush",
+              "@mapbox/shp-write",
               "sql.js",
               "web-ifc"
             ]

@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { RouterOutlet } from '@angular/router';
 import { LucideMenu, LucidePanelLeft, LucidePanelLeftClose } from '@lucide/angular';
 import { AuthService } from '@app/core/auth/auth.service';
+import { UxModeService } from '@app/core/ux-mode/ux-mode.service';
 import { HlmButtonImports } from '@app/shared/ui/button';
 import { HlmSkeletonImports } from '@app/shared/ui/skeleton';
 import { AppSidebarComponent } from './app-sidebar.component';
@@ -73,7 +74,29 @@ const SIDEBAR_COLLAPSED_KEY = 'gisforge.sidebarCollapsed';
                 <svg lucidePanelLeftClose class="size-5"></svg>
               }
             </button>
+
             <div class="flex-1"></div>
+
+            <div class="inline-flex rounded-md border p-0.5">
+              <button
+                hlmBtn
+                type="button"
+                size="sm"
+                [variant]="uxMode.mode() === 'novice' ? 'default' : 'ghost'"
+                (click)="uxMode.setMode('novice')"
+              >
+                Mode Novice
+              </button>
+              <button
+                hlmBtn
+                type="button"
+                size="sm"
+                [variant]="uxMode.mode() === 'expert' ? 'default' : 'ghost'"
+                (click)="uxMode.setMode('expert')"
+              >
+                Mode Expert
+              </button>
+            </div>
           </header>
           <main class="flex-1 overflow-auto p-6">
             <router-outlet />
@@ -85,6 +108,7 @@ const SIDEBAR_COLLAPSED_KEY = 'gisforge.sidebarCollapsed';
 })
 export class AppLayoutComponent {
   readonly authService = inject(AuthService);
+  readonly uxMode = inject(UxModeService);
   readonly sidebarOpen = signal(false);
   readonly sidebarCollapsed = signal(this.readCollapsedPreference());
 
