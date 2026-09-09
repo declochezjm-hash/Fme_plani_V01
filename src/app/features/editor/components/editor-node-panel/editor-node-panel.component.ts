@@ -1,4 +1,6 @@
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import { LucideBot } from '@lucide/angular';
+import { HlmButtonImports } from '@app/shared/ui/button';
 import { FormsModule } from '@angular/forms';
 import type { FeatureCollection } from 'geojson';
 import type { EtlPipelineNode } from '../../../copilot/copilot.types';
@@ -9,14 +11,26 @@ import { EditorMapPreviewComponent } from '../editor-map-preview/editor-map-prev
 @Component({
   selector: 'app-editor-node-panel',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, HlmInputImports, HlmLabelImports, EditorMapPreviewComponent],
+  imports: [FormsModule, LucideBot, HlmButtonImports, HlmInputImports, HlmLabelImports, EditorMapPreviewComponent],
   template: `
     @if (node(); as selected) {
       <div class="space-y-4">
-        <div>
-          <h3 class="text-sm font-semibold">{{ selected.label }}</h3>
-          <p class="text-xs text-muted-foreground">{{ selected.type }}</p>
+        <div class="flex items-start justify-between gap-2">
+          <div>
+            <h3 class="text-sm font-semibold">{{ selected.label }}</h3>
+            <p class="text-xs text-muted-foreground">{{ selected.type }}</p>
+          </div>
+          <button hlmBtn variant="outline" size="sm" type="button" (click)="askAssistant.emit()">
+            <svg lucideBot class="size-4"></svg>
+            Assistant
+          </button>
         </div>
+
+        @if (assistantReply()) {
+          <div class="rounded-md border bg-muted/50 p-3 text-xs whitespace-pre-wrap">
+            {{ assistantReply() }}
+          </div>
+        }
 
         @if (selected.type === 'reader') {
           <div class="space-y-2">
@@ -135,9 +149,11 @@ export class EditorNodePanelComponent {
   readonly node = input<EtlPipelineNode | null>(null);
   readonly preview = input<FeatureCollection | null>(null);
   readonly srid = input(4326);
+  readonly assistantReply = input<string | null>(null);
 
   readonly configChange = output<{ nodeId: string; config: Record<string, unknown> }>();
   readonly fileImport = output<{ nodeId: string; file: File }>();
+  readonly askAssistant = output<void>();
 
   geoJsonText(): string {
     const inline = this.node()?.config['inline'];

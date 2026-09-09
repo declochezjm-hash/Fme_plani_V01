@@ -1,14 +1,34 @@
-import { Injectable } from '@angular/core';
+import { inject, Injectable } from '@angular/core';
 import type { EtlPipelineJson } from '../../copilot/copilot.types';
 import type { PipelineRunResult } from './etl.types';
 import { executePipeline } from './pipeline-runner.engine';
+import { PipelineExecutionService } from './pipeline-execution.service';
+
+type WorkerDoneMessage = {
+  type: 'done';
+  ok: boolean;
+  result?: PipelineRunResult;
+  error?: string;
+};
+
+type WorkerProgressMessage = {
+  type: 'progress';
+  percent: number;
+  message: string;
+  nodeId?: string;
+};
+
+type WorkerMessage = WorkerDoneMessage | WorkerProgressMessage;
 
 @Injectable({ providedIn: 'root' })
 export class PipelineRunnerExecutor {
+  private readonly execution = inject(PipelineExecutionService);
   private worker: Worker | null = null;
   private workerFailed = false;
 
   async run(pipeline: EtlPipelineJson, defaultSrid = 4326): Promise<PipelineRunResult> {
+    this.execution.begin();
+
     if (!this.workerFailed && typeof Worker !== 'undefined') {
       try {
         return await this.runInWorker(pipeline, defaultSrid);
@@ -27,7 +47,16 @@ export class PipelineRunnerExecutor {
   ): Promise<PipelineRunResult> {
     return new Promise((resolve, reject) => {
       setTimeout(() => {
-        void executePipeline(pipeline, defaultSrid).then(resolve).catch(reject);
+        void executePipeline(pipeline, defaultSrid, (update) => this.execution.report(update))
+          .then((result) => {
+            this.execution.finish();
+            resolve(result);
+          })
+          .catch((error: unknown) => {
+            const message = error instanceof Error ? error.message : 'Erreur ETL';
+            this.execution.fail(message);
+            reject(error);
+          });
       }, 0);
     });
   }
@@ -39,7 +68,7 @@ export class PipelineRunnerExecutor {
     return new Promise((resolve, reject) => {
       try {
         if (!this.worker) {
-          this.worker = new Worker(new URL('./pipeline-runner.worker', import.meta.url), {
+          this.worker = new Worker(new URL('./pipeline.worker', import.meta.url), {
             type: 'module',
           });
         }
@@ -51,19 +80,32 @@ export class PipelineRunnerExecutor {
       const timeout = window.setTimeout(() => {
         cleanup();
         reject(new Error('Timeout worker ETL'));
-      }, 30_000);
+      }, 120_000);
 
-      const onMessage = (event: MessageEvent<{ ok: boolean; result?: PipelineRunResult; error?: string }>) => {
+      const onMessage = (event: MessageEvent<WorkerMessage>) => {
+        if (event.data.type === 'progress') {
+          this.execution.report({
+            percent: event.data.percent,
+            message: event.data.message,
+            nodeId: event.data.nodeId,
+          });
+          return;
+        }
+
         cleanup();
         if (event.data.ok && event.data.result) {
+          this.execution.finish();
           resolve(event.data.result);
           return;
         }
-        reject(new Error(event.data.error ?? 'Erreur worker ETL'));
+        const message = event.data.error ?? 'Erreur worker ETL';
+        this.execution.fail(message);
+        reject(new Error(message));
       };
 
       const onError = () => {
         cleanup();
+        this.execution.fail('Échec du worker ETL');
         reject(new Error('Échec du worker ETL'));
       };
 

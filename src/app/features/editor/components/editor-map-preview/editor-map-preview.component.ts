@@ -10,7 +10,7 @@ import {
   OnDestroy,
   viewChild,
 } from '@angular/core';
-import type { FeatureCollection, Geometry } from 'geojson';
+import type { Feature, FeatureCollection, Geometry } from 'geojson';
 import * as maplibregl from 'maplibre-gl';
 
 @Component({
@@ -88,6 +88,8 @@ export class EditorMapPreviewComponent implements OnDestroy {
       },
       center: [2.35, 48.85],
       zoom: 5,
+      pitch: 0,
+      bearing: 0,
     });
 
     this.map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
@@ -101,6 +103,14 @@ export class EditorMapPreviewComponent implements OnDestroy {
     });
   }
 
+  private has3dData(data: FeatureCollection): boolean {
+    return data.features.some(
+      (feature) =>
+        feature.properties?.['_has_z'] === true ||
+        typeof feature.properties?.['_extrusion_height'] === 'number',
+    );
+  }
+
   private updateData(data: FeatureCollection | null): void {
     if (!this.map || !this.mapReady) {
       return;
@@ -110,33 +120,56 @@ export class EditorMapPreviewComponent implements OnDestroy {
     const layerId = 'etl-preview-layer';
     const outlineId = 'etl-preview-outline';
     const pointLayerId = 'etl-preview-points';
+    const extrusionId = 'etl-preview-extrusion';
 
-    if (this.map.getLayer(pointLayerId)) {
-      this.map.removeLayer(pointLayerId);
-    }
-    if (this.map.getLayer(outlineId)) {
-      this.map.removeLayer(outlineId);
-    }
-    if (this.map.getLayer(layerId)) {
-      this.map.removeLayer(layerId);
+    for (const layer of [extrusionId, pointLayerId, outlineId, layerId]) {
+      if (this.map.getLayer(layer)) {
+        this.map.removeLayer(layer);
+      }
     }
     if (this.map.getSource(sourceId)) {
       this.map.removeSource(sourceId);
     }
 
     if (!data || data.features.length === 0) {
+      this.map.setPitch(0);
       queueMicrotask(() => this.map?.resize());
       return;
     }
 
-    this.map.addSource(sourceId, { type: 'geojson', data });
-    this.map.addLayer({
-      id: layerId,
-      type: 'fill',
-      source: sourceId,
-      paint: { 'fill-color': '#3b82f6', 'fill-opacity': 0.35 },
-      filter: ['==', '$type', 'Polygon'],
-    });
+    const enriched: FeatureCollection = {
+      type: 'FeatureCollection',
+      features: data.features.map((feature) => this.ensureExtrusionProperties(feature)),
+    };
+
+    const is3d = this.has3dData(enriched);
+    this.map.setPitch(is3d ? 55 : 0);
+
+    this.map.addSource(sourceId, { type: 'geojson', data: enriched });
+
+    if (is3d) {
+      this.map.addLayer({
+        id: extrusionId,
+        type: 'fill-extrusion',
+        source: sourceId,
+        paint: {
+          'fill-extrusion-color': '#3b82f6',
+          'fill-extrusion-height': ['coalesce', ['get', '_extrusion_height'], 10],
+          'fill-extrusion-base': ['coalesce', ['get', '_elevation'], 0],
+          'fill-extrusion-opacity': 0.85,
+        },
+        filter: ['==', '$type', 'Polygon'],
+      });
+    } else {
+      this.map.addLayer({
+        id: layerId,
+        type: 'fill',
+        source: sourceId,
+        paint: { 'fill-color': '#3b82f6', 'fill-opacity': 0.35 },
+        filter: ['==', '$type', 'Polygon'],
+      });
+    }
+
     this.map.addLayer({
       id: outlineId,
       type: 'line',
@@ -152,14 +185,60 @@ export class EditorMapPreviewComponent implements OnDestroy {
     });
 
     const bounds = new maplibregl.LngLatBounds();
-    for (const feature of data.features) {
+    for (const feature of enriched.features) {
       this.extendBounds(bounds, feature.geometry);
     }
     if (!bounds.isEmpty()) {
-      this.map.fitBounds(bounds, { padding: 40, maxZoom: 14 });
+      this.map.fitBounds(bounds, { padding: 40, maxZoom: is3d ? 18 : 14 });
     }
 
     queueMicrotask(() => this.map?.resize());
+  }
+
+  private ensureExtrusionProperties(feature: Feature): Feature {
+    const height = feature.properties?.['_extrusion_height'];
+    if (typeof height === 'number') {
+      return feature;
+    }
+
+    const z = this.maxZ(feature.geometry);
+    if (z <= 0) {
+      return feature;
+    }
+
+    return {
+      ...feature,
+      properties: {
+        ...feature.properties,
+        _elevation: 0,
+        _extrusion_height: z,
+        _has_z: true,
+      },
+    };
+  }
+
+  private maxZ(geometry: Geometry | null | undefined): number {
+    if (!geometry) {
+      return 0;
+    }
+
+    let maxZ = 0;
+    const walk = (coords: number[] | number[][] | number[][][]) => {
+      if (typeof coords[0] === 'number') {
+        const point = coords as number[];
+        maxZ = Math.max(maxZ, point[2] ?? 0);
+        return;
+      }
+      for (const child of coords) {
+        walk(child as number[] | number[][] | number[][][]);
+      }
+    };
+
+    if (geometry.type !== 'GeometryCollection') {
+      walk(geometry.coordinates as number[] | number[][] | number[][][]);
+    }
+
+    return maxZ;
   }
 
   private extendBounds(bounds: maplibregl.LngLatBounds, geometry: Geometry | null | undefined): void {

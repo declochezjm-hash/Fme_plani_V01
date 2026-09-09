@@ -35,4 +35,13 @@ export interface CopilotPromptResult {
   reply: string;
   plainFrenchSummary?: string;
   pipeline?: EtlPipelineJson;
+  llmUsed?: boolean;
+}
+
+export interface CopilotExplainContext {
+  nodeLabel?: string;
+  nodeType?: string;
+  nodeConfig?: Record<string, unknown>;
+  errorMessage?: string;
+  pipelineSummary?: string;
 }

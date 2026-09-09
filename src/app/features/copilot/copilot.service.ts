@@ -1,6 +1,8 @@
 import { computed, inject, Injectable, signal } from '@angular/core';
 import { SupabaseService } from '@app/core/supabase/supabase.service';
+import { CopilotLlmService } from './copilot-llm.service';
 import type {
+  CopilotExplainContext,
   CopilotMessage,
   CopilotMode,
   CopilotPromptResult,
@@ -16,6 +18,7 @@ const EMPTY_PIPELINE: EtlPipelineJson = {
 @Injectable({ providedIn: 'root' })
 export class CopilotService {
   private readonly supabase = inject(SupabaseService).client;
+  private readonly llm = inject(CopilotLlmService);
 
   private readonly _messages = signal<CopilotMessage[]>([]);
   private readonly _loading = signal(false);
@@ -77,6 +80,25 @@ export class CopilotService {
     }
   }
 
+  async explain(context: CopilotExplainContext): Promise<string> {
+    const fallback = this.buildLocalExplanation(context);
+    const prompt = [
+      context.errorMessage ? `Erreur : ${context.errorMessage}` : '',
+      context.nodeLabel ? `Nœud : ${context.nodeLabel} (${context.nodeType})` : '',
+      context.nodeConfig ? `Config : ${JSON.stringify(context.nodeConfig)}` : '',
+      context.pipelineSummary ?? '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    const llmReply = await this.llm.explain(prompt);
+    return llmReply ?? fallback;
+  }
+
+  parsePipelineFromText(text: string): EtlPipelineJson | null {
+    return this.llm.extractPipelineJson(text) ?? null;
+  }
+
   async executePipeline(projectId: string): Promise<string> {
     const { data, error } = await this.supabase.rpc('execute_etl_pipeline', {
       project_id_param: projectId,
@@ -94,21 +116,27 @@ export class CopilotService {
   }
 
   private async processPrompt(prompt: string, mode: CopilotMode): Promise<CopilotPromptResult> {
-    const pipeline = this.parsePromptToPipeline(prompt);
+    const llmPipeline = await this.llm.generatePipeline(prompt);
+    const pipeline = llmPipeline ?? this.parsePromptToPipeline(prompt);
     const plainFrenchSummary = this.toPlainFrench(pipeline, prompt);
+    const llmUsed = !!llmPipeline;
 
     if (mode === 'novice') {
+      const prefix = llmUsed ? '[Ollama] ' : '';
       return {
-        reply: plainFrenchSummary,
+        reply: `${prefix}${plainFrenchSummary}`,
         plainFrenchSummary,
         pipeline,
+        llmUsed,
       };
     }
 
+    const prefix = llmUsed ? 'Pipeline généré via Ollama' : 'Pipeline généré localement';
     return {
-      reply: `Pipeline généré (${pipeline.nodes.length} nœud${pipeline.nodes.length > 1 ? 's' : ''}).\n\n\`\`\`json_pipeline\n${JSON.stringify(pipeline, null, 2)}\n\`\`\``,
+      reply: `${prefix} (${pipeline.nodes.length} nœud${pipeline.nodes.length > 1 ? 's' : ''}).\n\n\`\`\`json_pipeline\n${JSON.stringify(pipeline, null, 2)}\n\`\`\``,
       plainFrenchSummary,
       pipeline,
+      llmUsed,
     };
   }
 
@@ -122,7 +150,7 @@ export class CopilotService {
       id: sourceId,
       type: 'reader',
       label: 'Lecture des données',
-      config: { format: 'auto' },
+      config: { format: lower.includes('ifc') ? 'ifc' : lower.includes('gpkg') ? 'geopackage' : 'geojson' },
       position: { x: 80, y: 120 },
     });
 
@@ -152,7 +180,7 @@ export class CopilotService {
         id: nodeId,
         type: 'reproject',
         label: `Reprojection EPSG:${srid}`,
-        config: { target_srid: srid },
+        config: { source_srid: 4326, target_srid: srid },
         position: { x, y: 120 },
       });
       edges.push({ id: `edge-${edges.length}`, source: previousId, target: nodeId });
@@ -160,13 +188,13 @@ export class CopilotService {
       x += 200;
     }
 
-    if (lower.includes('clip') || lower.includes('découper') || lower.includes('decouper')) {
-      const nodeId = `clip-${nodes.length}`;
+    if (lower.includes('topolog') || lower.includes('nettoy')) {
+      const nodeId = `topology-${nodes.length}`;
       nodes.push({
         id: nodeId,
-        type: 'clip',
-        label: 'Découpage spatial',
-        config: {},
+        type: 'topology_validator',
+        label: 'Nettoyage topologie',
+        config: { heal: true },
         position: { x, y: 120 },
       });
       edges.push({ id: `edge-${edges.length}`, source: previousId, target: nodeId });
@@ -179,12 +207,28 @@ export class CopilotService {
       id: writerId,
       type: 'writer',
       label: 'Écriture des résultats',
-      config: { format: 'postgis' },
+      config: { format: 'geojson' },
       position: { x, y: 120 },
     });
     edges.push({ id: `edge-${edges.length}`, source: previousId, target: writerId });
 
     return { version: 1, nodes, edges };
+  }
+
+  private buildLocalExplanation(context: CopilotExplainContext): string {
+    if (context.errorMessage) {
+      return `L'erreur « ${context.errorMessage} » indique un problème sur le nœud « ${context.nodeLabel ?? 'inconnu'} ». Vérifiez les connexions entrantes, le format source et les paramètres SRID.`;
+    }
+
+    if (context.nodeType === 'buffer') {
+      return `Le nœud tampon agrandit les géométries selon la distance en mètres. Augmentez « distance_m » pour un effet plus large ou connectez un reader en amont.`;
+    }
+
+    if (context.nodeType === 'reproject') {
+      return `La reprojection convertit les coordonnées entre deux EPSG. Vérifiez que « source_srid » correspond aux données d'entrée et « target_srid » à la sortie souhaitée (ex. 2154 pour Lambert-93).`;
+    }
+
+    return `Le nœud « ${context.nodeLabel ?? context.nodeType} » transforme le flux en entrée. Utilisez le panneau de configuration pour ajuster ses paramètres.`;
   }
 
   private toPlainFrench(pipeline: EtlPipelineJson, originalPrompt: string): string {
@@ -197,6 +241,9 @@ export class CopilotService {
         if (node.type === 'reproject') {
           return `reprojeter les données vers le système EPSG:${node.config['target_srid']}`;
         }
+        if (node.type === 'topology_validator') {
+          return 'nettoyer et réparer la topologie des géométries';
+        }
         if (node.type === 'clip') {
           return 'découper les entités selon une emprise';
         }
@@ -204,10 +251,10 @@ export class CopilotService {
       });
 
     if (steps.length === 0) {
-      return `J'ai compris votre demande « ${originalPrompt} ». Décrivez une transformation spatiale (tampon, reprojection, découpage…) pour que je génère le pipeline.`;
+      return `J'ai compris votre demande « ${originalPrompt} ». Décrivez une transformation spatiale pour que je génère le pipeline.`;
     }
 
     const joined = steps.join(', puis ');
-    return `Voici ce que je propose : lire vos données, ${joined}, puis enregistrer le résultat en base PostGIS.`;
+    return `Voici ce que je propose : lire vos données, ${joined}, puis enregistrer le résultat.`;
   }
 }

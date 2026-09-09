@@ -3,7 +3,9 @@ import { AuthService } from '@app/core/auth/auth.service';
 import type { Json } from '@app/core/supabase/database.types';
 import { SupabaseService } from '@app/core/supabase/supabase.service';
 import type { EtlPipelineJson, EtlPipelineNode } from '../copilot/copilot.types';
+import { CopilotService } from '../copilot/copilot.service';
 import { DEFAULT_DEMO_PIPELINE, NODE_CATALOG, type PipelineRunResult } from './services/etl.types';
+import { PipelineExecutionService } from './services/pipeline-execution.service';
 import { PipelineRunnerService } from './services/pipeline-runner.service';
 import type { CreateProjectDto, EtlProject, UpdateProjectDto } from './editor.types';
 
@@ -18,6 +20,8 @@ export class EditorService {
   private readonly supabase = inject(SupabaseService).client;
   private readonly auth = inject(AuthService);
   private readonly runner = inject(PipelineRunnerService);
+  private readonly execution = inject(PipelineExecutionService);
+  private readonly copilot = inject(CopilotService);
 
   private readonly _projects = signal<EtlProject[]>([]);
   private readonly _activeProjectId = signal<string | null>(null);
@@ -27,6 +31,8 @@ export class EditorService {
   private readonly _saving = signal(false);
   private readonly _running = signal(false);
   private readonly _lastRunResult = signal<PipelineRunResult | null>(null);
+  private readonly _assistantReply = signal<string | null>(null);
+  private readonly _lastError = signal<string | null>(null);
 
   readonly projects = this._projects.asReadonly();
   readonly activeProjectId = this._activeProjectId.asReadonly();
@@ -36,6 +42,10 @@ export class EditorService {
   readonly saving = this._saving.asReadonly();
   readonly running = this._running.asReadonly();
   readonly lastRunResult = this._lastRunResult.asReadonly();
+  readonly assistantReply = this._assistantReply.asReadonly();
+  readonly lastError = this._lastError.asReadonly();
+  readonly executionProgress = this.execution.progress;
+  readonly executionStatus = this.execution.status;
   readonly nodeCatalog = NODE_CATALOG;
 
   readonly activeProject = computed(() => {
@@ -101,6 +111,53 @@ export class EditorService {
 
   selectNode(nodeId: string | null): void {
     this._selectedNodeId.set(nodeId);
+  }
+
+  injectPipeline(pipeline: EtlPipelineJson): void {
+    const remapped = this.remapPipelineIds(pipeline);
+    this._canvasPipeline.set(remapped);
+    this._selectedNodeId.set(remapped.nodes[0]?.id ?? null);
+    this._lastRunResult.set(null);
+  }
+
+  async askAssistant(): Promise<void> {
+    const node = this.selectedNode();
+    const reply = await this.copilot.explain({
+      nodeLabel: node?.label,
+      nodeType: node?.type,
+      nodeConfig: node?.config,
+      errorMessage: this._lastError() ?? undefined,
+      pipelineSummary: `${this._canvasPipeline().nodes.length} nœuds, ${this._canvasPipeline().edges.length} connexions`,
+    });
+    this._assistantReply.set(reply);
+  }
+
+  clearAssistantReply(): void {
+    this._assistantReply.set(null);
+  }
+
+  private remapPipelineIds(pipeline: EtlPipelineJson): EtlPipelineJson {
+    const idMap = new Map<string, string>();
+    const nodes: EtlPipelineNode[] = pipeline.nodes.map((node, index) => {
+      const newId = `${node.type}-${crypto.randomUUID().slice(0, 8)}`;
+      idMap.set(node.id, newId);
+      return {
+        ...node,
+        id: newId,
+        position: {
+          x: 80 + index * 220,
+          y: node.position?.y ?? 120,
+        },
+      };
+    });
+
+    const edges = pipeline.edges.map((edge, index) => ({
+      id: `edge-${index}-${crypto.randomUUID().slice(0, 6)}`,
+      source: idMap.get(edge.source) ?? edge.source,
+      target: idMap.get(edge.target) ?? edge.target,
+    }));
+
+    return { version: pipeline.version ?? 1, nodes, edges };
   }
 
   async load(): Promise<void> {
@@ -332,10 +389,18 @@ export class EditorService {
     }
 
     this._running.set(true);
+    this._lastError.set(null);
+    this.execution.begin();
     try {
       const result = await this.runner.run(this._canvasPipeline(), project.default_srid);
       this._lastRunResult.set(result);
+      this.execution.finish();
       return result;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Erreur ETL';
+      this._lastError.set(message);
+      this.execution.fail(message);
+      throw error;
     } finally {
       this._running.set(false);
     }

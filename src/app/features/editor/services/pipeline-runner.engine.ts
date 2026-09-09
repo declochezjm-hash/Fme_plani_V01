@@ -1,13 +1,17 @@
 import type { EtlPipelineJson, EtlPipelineNode } from '../../copilot/copilot.types';
 import type { EtlDataset, PipelineRunResult, TransformerContext } from './etl.types';
+import type { PipelineExecutionProgress } from './pipeline-execution.service';
 import { readDataset } from './readers/reader.registry';
 import { bufferDataset } from './transformers/buffer.transformer';
 import { reprojectDataset } from './transformers/reproject.transformer';
 import { topologyDataset } from './transformers/topology.transformer';
 
+export type PipelineProgressReporter = (update: PipelineExecutionProgress) => void;
+
 export async function executePipeline(
   pipeline: EtlPipelineJson,
   defaultSrid = 4326,
+  onProgress?: PipelineProgressReporter,
 ): Promise<PipelineRunResult> {
   const started = performance.now();
   const logs: string[] = [];
@@ -22,12 +26,23 @@ export async function executePipeline(
   let rowsRead = 0;
   let rowsWritten = 0;
   let finalOutput: EtlDataset | null = null;
+  const total = order.length;
 
-  for (const nodeId of order) {
+  onProgress?.({ percent: 0, message: 'Démarrage du pipeline…' });
+
+  for (let index = 0; index < order.length; index++) {
+    const nodeId = order[index];
     const node = pipeline.nodes.find((item) => item.id === nodeId);
     if (!node) {
       continue;
     }
+
+    const percent = Math.round(((index + 0.5) / total) * 100);
+    onProgress?.({
+      percent,
+      message: `Nœud « ${node.label} » (${index + 1}/${total})`,
+      nodeId: node.id,
+    });
 
     logs.push(`Exécution du nœud « ${node.label} » (${node.type})`);
 
@@ -80,6 +95,8 @@ export async function executePipeline(
     nodeResults[node.id] = { featureCount: dataset.collection.features.length };
     logs.push(`  → ${dataset.collection.features.length} entité(s) transformées`);
   }
+
+  onProgress?.({ percent: 100, message: 'Pipeline terminé' });
 
   const durationMs = Math.round(performance.now() - started);
   const intermediates: Record<string, EtlDataset> = {};

@@ -108,6 +108,19 @@ import { EditorService } from './editor.service';
               </div>
             </div>
 
+            @if (editorService.running() || editorService.executionProgress() > 0) {
+              <div class="rounded-md border bg-muted/40 p-2 text-[10px] space-y-2">
+                <p class="font-medium">{{ editorService.executionStatus() }}</p>
+                <div class="h-2 w-full rounded-full bg-muted overflow-hidden">
+                  <div
+                    class="h-full bg-primary transition-all duration-200"
+                    [style.width.%]="editorService.executionProgress()"
+                  ></div>
+                </div>
+                <p class="tabular-nums">{{ editorService.executionProgress() }} %</p>
+              </div>
+            }
+
             @if (editorService.lastRunResult(); as run) {
               <div class="rounded-md border bg-muted/40 p-2 text-[10px] space-y-1">
                 <p class="font-medium">Dernière exécution</p>
@@ -128,9 +141,11 @@ import { EditorService } from './editor.service';
             <app-editor-node-panel
               [node]="editorService.selectedNode()"
               [preview]="editorService.selectedNodePreview()"
+              [assistantReply]="editorService.assistantReply()"
               [srid]="editorService.activeProject()?.default_srid ?? 4326"
               (configChange)="editorService.updateNodeConfig($event.nodeId, $event.config)"
               (fileImport)="onFileImport($event.nodeId, $event.file)"
+              (askAssistant)="onAskAssistant()"
             />
           </aside>
         </div>
@@ -184,6 +199,15 @@ export class EditorPage implements OnInit {
       );
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Erreur lors de l\'exécution.';
+      toast.error(message);
+    }
+  }
+
+  async onAskAssistant(): Promise<void> {
+    try {
+      await this.editorService.askAssistant();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Erreur assistant.';
       toast.error(message);
     }
   }

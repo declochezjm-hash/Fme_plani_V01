@@ -55,7 +55,14 @@
               "src/styles.css",
               "node_modules/maplibre-gl/dist/maplibre-gl.css"
             ],
-            "scripts": []
+            "scripts": [],
+            "allowedCommonJsDependencies": [
+              "@turf/jsts",
+              "papaparse",
+              "rbush",
+              "sql.js",
+              "web-ifc"
+            ]
           },
           "configurations": {
             "production": {

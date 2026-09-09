@@ -1,7 +1,9 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { LucideBot, LucideSend, LucideSparkles, LucideTrash2 } from '@lucide/angular';
+import { Router } from '@angular/router';
+import { LucideBot, LucideImport, LucideSend, LucideSparkles, LucideTrash2 } from '@lucide/angular';
 import { toast } from 'ngx-sonner';
+import { EditorService } from '../editor/editor.service';
 import { HlmButtonImports } from '@app/shared/ui/button';
 import { HlmInputImports } from '@app/shared/ui/input';
 import { HlmLabelImports } from '@app/shared/ui/label';
@@ -18,6 +20,7 @@ import { CopilotService } from './copilot.service';
     LucideSend,
     LucideSparkles,
     LucideTrash2,
+    LucideImport,
     HlmButtonImports,
     HlmInputImports,
     HlmLabelImports,
@@ -93,6 +96,18 @@ import { CopilotService } from './copilot.service';
                       {{ message.plainFrenchSummary }}
                     </p>
                   }
+                  @if (message.pipeline) {
+                    <button
+                      hlmBtn
+                      size="sm"
+                      type="button"
+                      class="mt-3"
+                      (click)="injectPipeline(message.pipeline!)"
+                    >
+                      <svg lucideImport class="size-4"></svg>
+                      Injecter dans le Canvas
+                    </button>
+                  }
                 </div>
               </div>
             }
@@ -139,6 +154,8 @@ import { CopilotService } from './copilot.service';
 })
 export class CopilotPage {
   readonly copilotService = inject(CopilotService);
+  private readonly editorService = inject(EditorService);
+  private readonly router = inject(Router);
   promptText = '';
 
   setMode(mode: CopilotMode): void {
@@ -148,6 +165,12 @@ export class CopilotPage {
   clearConversation(): void {
     this.copilotService.clearConversation();
     this.promptText = '';
+  }
+
+  injectPipeline(pipeline: import('./copilot.types').EtlPipelineJson): void {
+    this.editorService.injectPipeline(pipeline);
+    toast.success('Pipeline injecté dans l\'éditeur.');
+    void this.router.navigate(['/editor']);
   }
 
   async sendMessage(): Promise<void> {
