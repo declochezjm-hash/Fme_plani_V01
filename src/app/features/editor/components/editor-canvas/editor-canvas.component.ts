@@ -14,10 +14,24 @@ const NODE_HEIGHT = 72;
 @Component({
   selector: 'app-editor-canvas',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: {
+    class: 'block w-full',
+    style: 'min-height: 32rem; height: 32rem;',
+  },
   styles: `
     .canvas-root {
       touch-action: none;
       user-select: none;
+      display: block;
+      width: 100%;
+      height: 100%;
+      min-height: 32rem;
+      background-color: var(--card);
+    }
+    .canvas-grid {
+      background-color: color-mix(in oklch, var(--muted) 35%, var(--card));
+      background-image: radial-gradient(circle, var(--border) 1px, transparent 1px);
+      background-size: 20px 20px;
     }
     .port {
       width: 10px;
@@ -26,6 +40,7 @@ const NODE_HEIGHT = 72;
       border: 2px solid var(--primary);
       background: var(--background);
       cursor: crosshair;
+      z-index: 2;
     }
     .port:hover {
       background: var(--primary);
@@ -33,34 +48,42 @@ const NODE_HEIGHT = 72;
     .node-card {
       width: ${NODE_WIDTH}px;
       min-height: ${NODE_HEIGHT}px;
+      z-index: 1;
+    }
+    .edge-layer {
+      z-index: 0;
     }
   `,
   template: `
     <div
-      class="canvas-root relative h-full min-h-[28rem] overflow-hidden rounded-lg border bg-card"
+      class="canvas-root canvas-grid relative overflow-hidden rounded-lg border border-border"
       (pointermove)="onPointerMove($event)"
       (pointerup)="onPointerUp()"
       (pointerleave)="onPointerUp()"
     >
-      <div
-        class="absolute inset-0 bg-[radial-gradient(circle,_var(--border)_1px,_transparent_1px)] [background-size:20px_20px]"
-      ></div>
-
-      <svg class="absolute inset-0 h-full w-full pointer-events-none">
+      <svg class="edge-layer absolute inset-0 h-full w-full pointer-events-none">
         @for (edge of pipeline().edges; track edge.id) {
           <path
             [attr.d]="edgePath(edge)"
             fill="none"
             stroke="var(--primary)"
             stroke-width="2"
-            opacity="0.7"
+            opacity="0.75"
           />
         }
       </svg>
 
+      @if (pipeline().nodes.length === 0) {
+        <div class="absolute inset-0 flex items-center justify-center p-6 text-center">
+          <p class="text-sm text-muted-foreground max-w-sm">
+            Canvas vide — ajoutez des nœuds depuis la palette ou chargez le pipeline démo.
+          </p>
+        </div>
+      }
+
       @for (node of pipeline().nodes; track node.id) {
         <div
-          class="node-card absolute rounded-md border bg-background shadow-sm cursor-grab active:cursor-grabbing relative"
+          class="node-card absolute rounded-md border border-border bg-background shadow-md cursor-grab active:cursor-grabbing"
           [class.ring-2]="selectedNodeId() === node.id"
           [class.ring-primary]="selectedNodeId() === node.id"
           [class.border-primary]="connectingFromId() === node.id"
@@ -89,7 +112,7 @@ const NODE_HEIGHT = 72;
       }
 
       @if (connectingFromId()) {
-        <p class="absolute top-2 left-2 text-[10px] bg-primary text-primary-foreground px-2 py-1 rounded-md">
+        <p class="absolute top-2 left-2 z-10 text-[10px] bg-primary text-primary-foreground px-2 py-1 rounded-md">
           Cliquez sur une entrée pour connecter…
         </p>
       }
@@ -138,11 +161,16 @@ export class EditorCanvasComponent {
     }
 
     event.preventDefault();
+    event.stopPropagation();
+
+    const canvas = (event.currentTarget as HTMLElement).closest('.canvas-root') as HTMLElement;
+    const canvasRect = canvas.getBoundingClientRect();
+
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
     this.draggingNodeId.set(node.id);
     this.dragOffset.set({
-      x: event.clientX - node.position.x,
-      y: event.clientY - node.position.y,
+      x: event.clientX - canvasRect.left - node.position.x,
+      y: event.clientY - canvasRect.top - node.position.y,
     });
   }
 

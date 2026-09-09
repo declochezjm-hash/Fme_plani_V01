@@ -73,7 +73,7 @@ import { EditorService } from './editor.service';
           <div hlmSkeleton class="h-64 w-full"></div>
         </div>
       } @else {
-        <div class="grid gap-4 lg:grid-cols-[14rem_1fr_18rem]">
+        <div class="grid gap-4 lg:grid-cols-[14rem_1fr_18rem] min-h-[32rem] items-stretch">
           <aside class="space-y-3">
             <div class="space-y-1">
               <label hlmLabel for="project-select" class="text-xs">Projet</label>
@@ -124,7 +124,7 @@ import { EditorService } from './editor.service';
             (connectNodes)="editorService.connectNodes($event.sourceId, $event.targetId)"
           />
 
-          <aside class="rounded-lg border bg-card p-3 overflow-y-auto max-h-[32rem]">
+          <aside class="rounded-lg border bg-card p-3 overflow-y-auto min-h-[32rem] max-h-[32rem]">
             <app-editor-node-panel
               [node]="editorService.selectedNode()"
               [preview]="editorService.selectedNodePreview()"
@@ -148,6 +148,7 @@ export class EditorPage implements OnInit {
   async refresh(): Promise<void> {
     try {
       await this.editorService.load();
+      this.editorService.ensureDemoPipelineOnLoad();
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Erreur lors du chargement.';
       toast.error(message);

@@ -121,7 +121,7 @@ import { EditorMapPreviewComponent } from '../editor-map-preview/editor-map-prev
 
         <div class="space-y-1">
           <p class="text-xs font-medium">Prévisualisation cartographique</p>
-          <div class="h-48 rounded-md border">
+          <div class="rounded-md border overflow-hidden" style="height: 400px; min-height: 400px; width: 100%;">
             <app-editor-map-preview [collection]="preview()" [srid]="srid()" />
           </div>
         </div>

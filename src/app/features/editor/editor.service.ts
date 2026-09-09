@@ -77,9 +77,26 @@ export class EditorService {
   setActiveProject(projectId: string | null): void {
     this._activeProjectId.set(projectId);
     const project = this._projects().find((item) => item.id === projectId);
-    this._canvasPipeline.set(project?.pipeline_config ?? EMPTY_PIPELINE);
+    this._canvasPipeline.set(this.normalizePipeline(project?.pipeline_config));
     this._selectedNodeId.set(null);
     this._lastRunResult.set(null);
+  }
+
+  ensureDemoPipelineOnLoad(): void {
+    if (this._canvasPipeline().nodes.length === 0) {
+      this._canvasPipeline.set(this.cloneDemoPipeline());
+    }
+  }
+
+  private normalizePipeline(config: EtlPipelineJson | undefined | null): EtlPipelineJson {
+    if (!config?.nodes?.length) {
+      return this.cloneDemoPipeline();
+    }
+    return config;
+  }
+
+  private cloneDemoPipeline(): EtlPipelineJson {
+    return JSON.parse(JSON.stringify(DEFAULT_DEMO_PIPELINE)) as EtlPipelineJson;
   }
 
   selectNode(nodeId: string | null): void {
@@ -118,7 +135,11 @@ export class EditorService {
         this.setActiveProject(mapped[0].id);
       } else if (activeId) {
         this.setActiveProject(activeId);
+      } else {
+        this._canvasPipeline.set(this.cloneDemoPipeline());
       }
+
+      this.ensureDemoPipelineOnLoad();
     } finally {
       this._loading.set(false);
     }

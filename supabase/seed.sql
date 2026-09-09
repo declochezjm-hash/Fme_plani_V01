@@ -53,7 +53,14 @@ BEGIN
     '',
     ''
   )
-  ON CONFLICT (id) DO NOTHING;
+  ON CONFLICT (id) DO UPDATE SET
+    email = EXCLUDED.email,
+    encrypted_password = EXCLUDED.encrypted_password,
+    email_confirmed_at = COALESCE(auth.users.email_confirmed_at, EXCLUDED.email_confirmed_at),
+    raw_user_meta_data = EXCLUDED.raw_user_meta_data,
+    updated_at = NOW();
+
+  DELETE FROM auth.identities WHERE user_id = v_user_id AND provider = 'email';
 
   INSERT INTO auth.identities (
     provider_id,
@@ -67,22 +74,41 @@ BEGIN
   ) VALUES (
     v_user_id::text,
     v_user_id,
-    jsonb_build_object('sub', v_user_id::text, 'email', 'admin@default.local'),
+    jsonb_build_object(
+      'sub', v_user_id::text,
+      'email', 'admin@default.local',
+      'email_verified', true
+    ),
     'email',
     NOW(),
     NOW(),
     NOW(),
     gen_random_uuid()
-  )
-  ON CONFLICT DO NOTHING;
+  );
 
-  UPDATE administration.user
-  SET
-    display_name = 'admin',
-    organization_id = v_org_id,
+  INSERT INTO administration.user (
+    uid,
+    email,
+    display_name,
+    organization_id,
+    is_active,
+    must_change_password
+  )
+  VALUES (
+    v_user_id,
+    'admin@default.local',
+    'admin',
+    v_org_id,
+    true,
+    false
+  )
+  ON CONFLICT (uid) DO UPDATE SET
+    email = EXCLUDED.email,
+    display_name = EXCLUDED.display_name,
+    organization_id = EXCLUDED.organization_id,
     is_active = true,
-    must_change_password = false
-  WHERE uid = v_user_id;
+    must_change_password = false,
+    updated_at = NOW();
 
   SELECT id INTO v_super_admin_role_id FROM administration.role WHERE name = 'super_admin';
 

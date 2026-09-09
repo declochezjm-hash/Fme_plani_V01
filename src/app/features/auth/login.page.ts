@@ -99,6 +99,14 @@ type AuthMode = 'signin' | 'reset';
             </button>
           </form>
 
+          @if (mode() === 'signin') {
+            <p class="text-xs text-muted-foreground mt-4 rounded-md border bg-muted/40 p-3">
+              Développement local : <span class="font-mono">admin@default.local</span> /
+              <span class="font-mono">123456</span>
+              (après <span class="font-mono">npx supabase db reset</span>).
+            </p>
+          }
+
           @if (mode() === 'reset') {
             <div class="mt-4 text-center">
               <button

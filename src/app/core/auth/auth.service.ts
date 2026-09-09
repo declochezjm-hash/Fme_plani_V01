@@ -1,6 +1,6 @@
 import { computed, inject, Injectable, signal } from '@angular/core';
 import { Router } from '@angular/router';
-import type { AuthSession, User } from '@supabase/supabase-js';
+import { AuthApiError, type AuthSession, type User } from '@supabase/supabase-js';
 import { SupabaseService } from '../supabase/supabase.service';
 import type { AppRole, UserProfile } from './auth.types';
 
@@ -44,10 +44,12 @@ export class AuthService {
 
   async signIn(email: string, password: string) {
     const { data, error } = await this.supabase.auth.signInWithPassword({
-      email,
+      email: email.trim(),
       password,
     });
-    if (error) throw error;
+    if (error) {
+      throw this.toAuthError(error);
+    }
 
     if (data.user) {
       await this.loadUserData(data.user.id);
@@ -177,5 +179,22 @@ export class AuthService {
       this.organizationActive.set(null);
       console.error('Error loading user profile & roles:', error);
     }
+  }
+
+  private toAuthError(error: unknown): Error {
+    if (error instanceof AuthApiError) {
+      if (error.status === 400 || error.message === 'Invalid login credentials') {
+        return new Error(
+          'Email ou mot de passe incorrect. En local : admin@default.local / 123456 (après npx supabase db reset).',
+        );
+      }
+      return new Error(error.message);
+    }
+
+    if (error instanceof Error) {
+      return error;
+    }
+
+    return new Error('Erreur de connexion.');
   }
 }

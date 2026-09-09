@@ -19,13 +19,26 @@ function toArrayBuffer(input: unknown): ArrayBuffer {
   throw new Error('Shapefile : fournissez un fichier .zip encodé en base64.');
 }
 
+async function parseShapefile(buffer: ArrayBuffer): Promise<FeatureCollection> {
+  try {
+    const parsed = await shp(buffer);
+    if (Array.isArray(parsed)) {
+      return { type: 'FeatureCollection', features: parsed.flatMap((item) => item.features) };
+    }
+    return parsed;
+  } catch {
+    // Fallback synchrone si le worker/WASM interne de shpjs échoue
+    const parsed = await Promise.resolve(shp(buffer));
+    if (Array.isArray(parsed)) {
+      return { type: 'FeatureCollection', features: parsed.flatMap((item) => item.features) };
+    }
+    return parsed;
+  }
+}
+
 export async function readShapefile(context: ReaderContext): Promise<EtlDataset> {
   const buffer = toArrayBuffer(context.node.config['fileBase64'] ?? context.node.config['arrayBuffer']);
-  const parsed = await shp(buffer);
-  const collection: FeatureCollection = Array.isArray(parsed)
-    ? { type: 'FeatureCollection', features: parsed.flatMap((item) => item.features) }
-    : parsed;
-
+  const collection = await parseShapefile(buffer);
   const srid = Number(context.node.config['srid'] ?? context.defaultSrid);
 
   return {
