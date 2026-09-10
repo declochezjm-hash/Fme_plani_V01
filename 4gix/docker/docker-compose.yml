@@ -1,0 +1,51 @@
+services:
+  postgis:
+    image: postgis/postgis:15-3.3
+    container_name: 4gix-postgis
+    environment:
+      POSTGRES_USER: 4gix_user
+      POSTGRES_PASSWORD: 4gix_password
+      POSTGRES_DB: 4gix_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+      - ./postgis/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U 4gix_user -d 4gix_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: 4gix-backend
+    environment:
+      DATABASE_URL: postgresql://4gix_user:4gix_password@postgis:5432/4gix_db
+      CORS_ORIGINS: http://localhost:5173,http://localhost:3000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../backend/app:/app/app:ro
+    depends_on:
+      postgis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: 4gix-frontend
+    environment:
+      VITE_API_URL: http://localhost:8000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ../frontend/src:/app/src
+    depends_on:
+      - backend
+
+volumes:
+  postgis_data:
